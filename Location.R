@@ -1,4 +1,4 @@
-setwd('~/Downloads')
+setwd('~/Documents/GitRepos/RRepos')
 
 library(codetools)
 library(lattice)
@@ -60,7 +60,7 @@ offline
 
 #### Start Data Preparation###############################################
 
-offline  = readData("offline.final.trace.txt")
+offline  = readData("Data/offline.final.trace.txt")
 
 # Check the types of each ID in offline DF
   #print ("check: Types of each ID in DF")
@@ -215,7 +215,7 @@ with(offline, sum(angle==315&mac=="00:0f:a3:39:e1:c0"&posx==24&posy==4))
   ####### Test data prep
   
   macs = unique(dfSummary$mac)
-  online = readData("online.final.trace.txt")
+  online = readData("Data/online.final.trace.txt")
   online = subset(online,mac %in% macs)
   # create X-Y coord factor
   online$posXY = paste(online$posx,online$posy,sep="-")
@@ -256,7 +256,7 @@ with(offline, sum(angle==315&mac=="00:0f:a3:39:e1:c0"&posx==24&posy==4))
   # @varSignals = name of the variable in the signals data set to average.
   # returns the subsetted and aggregated and formatted dataframe.
   
-  reshapeSS = function(angleNewObs,m,signals, varSignal = "avSignal"){
+  getTrainingSubset = function(angleNewObs,m,signals, varSignal = "avSignal"){
     refs = seq(0, by=45, length=8)
     nearestAngle = roundOrientation(angleNewObs)
     
@@ -293,7 +293,53 @@ with(offline, sum(angle==315&mac=="00:0f:a3:39:e1:c0"&posx==24&posy==4))
     return(newDataSS)
   }
   
-  trainnSS = reshapeSS(130,3,dfSummary)
+  ##Sample of how to return the subsetted training set.
+  ##trainnSS = getTrainingSubset(130,3,dfSummary)
+  
+  
+  ##Find the single nearest neighbour to the passed in R^6 vector of readings.
+  findNN = function(newSignal, trainSubset){
+    diffs = apply(trainSubset[,4:9],1,function(x)x-newSignal)
+    dists = apply(diffs,2,function(x)sqrt(sum(x^2)))
+    closest = order(dists)
+    return (trainSubset[closest,1:3])
+  }
+  
+  # @k = number of nearest neighbours to base prediction on.
+  predXY = function(newSignals, newAngles, trainData, numAngles=1,k=3){
+    # init a list. One item for each test signal passed in.
+    closeXY = list(length = nrow(newSignals))
+    
+    #get the NN for each test based on 3 close angles.
+    for (i in 1:nrow(newSignals)){
+      trainSS = getTrainingSubset(newAngles[i],numAngles,trainData)
+      closeXY[[i]]=findNN(newSignal=as.numeric(newSignals[i, ]),trainSS)
+    }
+    # take the averages over each coordinate.
+    estXY=lapply(closeXY,function(x) sapply(x[,2:3],function(x) mean (x[1:k])))
+    estXY = do.call("rbind",estXY)
+    return (estXY)
+  }
+  
+  estXYK3 = predXY(newSignals = onlineSummary[,6:11],
+                   newAngles = onlineSummary[,4],
+                   dfSummary,numAngles=1,k=3)
+  
+  #Visualise the errors
+  par(new=FALSE) # cause clearing the screen before plotting the next chart
+  plot(dfSummary$posx,dfSummary$posy,'p',cex=0.3,col='blue',xlim=c(0,30),ylim=c(0,15),main="Plot of Test Readings vs NN Estimates")
+  par(new=TRUE)
+  errorData = cbind(onlineSummary$posx,onlineSummary$posy,estXYK3[,1],estXYK3[,2])
+  for (i in 1:nrow(errorData)){
+    m=t(matrix(errorData[i,],ncol=2))
+    plot(m[1,1],m[1,2],'p',cex=0.8,xlim=c(0,30),ylim=c(0,15),xlab='',ylab='')
+    par(new=TRUE)
+    plot(m[2,1],m[2,2],'p',cex=0.3,xlim=c(0,30),ylim=c(0,15),xlab='',ylab='')
+    par(new=TRUE)
+    plot(m[,1],m[,2],'l',xlim=c(0,30),ylim=c(0,15),xlab='',ylab='')
+    par(new=TRUE)
+  }
+  
   
   
   
