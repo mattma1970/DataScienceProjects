@@ -16,9 +16,9 @@ roundOrientation = function(x)
   c(refs[1:8],0)[q]
 }
 
-#####################################################################
+
 ## Read data and do some basic cleaning up and class conversion and angle quantisation
-#####################################################################
+
 readData = function(fileName)
 {
 # Load the data from plain txt file
@@ -58,7 +58,7 @@ readData = function(fileName)
 offline  
   }
 
-#### Start Data Preparation###############################################
+#### Start Data Preparation ###############################################
 
 offline  = readData("Data/offline.final.trace.txt")
 
@@ -154,9 +154,10 @@ with(offline, sum(angle==315&mac=="00:0f:a3:39:e1:c0"&posx==24&posy==4))
 #OBSERVATIONS: skew near zero for all observation counts.
   
   
-## Signal and distance exploration
+######  Signal and distance exploration. 
   subMac = names(sort(table(offline$mac),decreasing=TRUE)[1:7])
 
+  ## create a thin plate spline model using Tps from 'fields' library.
   smoothSS = function(macDisplay, myAngle,data){
     #exploration for only a single AP and angle.
     oneAPAngle = subset(data,mac==macDisplay & angle==myAngle)
@@ -254,10 +255,15 @@ with(offline, sum(angle==315&mac=="00:0f:a3:39:e1:c0"&posx==24&posy==4))
   # @m = number of closest 45 degree angles to include
   # @signals - the full dataset to subset
   # @varSignals = name of the variable in the signals data set to average.
+  # @blSampleAngle = flag indicating that instead of subsetting based on a collection of near angles we will randomly select one angle only.
+  #                   This feature used in cross validation to select the CV subset.
   # returns the subsetted and aggregated and formatted dataframe.
   
-  getTrainingSubset = function(angleNewObs,m,signals, varSignal = "avSignal"){
+  getTrainingSubset = function(angleNewObs=0,m=1,signals, varSignal = "avSignal", blSampleAngle =FALSE){
     refs = seq(0, by=45, length=8)
+    
+    if (!blSampleAngle){
+      # get the list of angles in 45 increments that flank the angleNewObs value passed in.
     nearestAngle = roundOrientation(angleNewObs)
     
     if (m%%2==1){
@@ -271,15 +277,22 @@ with(offline, sum(angle==315&mac=="00:0f:a3:39:e1:c0"&posx==24&posy==4))
         angles = angles[-m]
     }
     
-    # get the subset of the training set
+    # modulo 360 degrees
     angles=angles+nearestAngle  # get the sequence of angles to include in the search for nearest neighbours
     angles[angles<0] = angles[angles<0]+360    
     angles[angles>360] = angles[angles>360]-360
     
+    # get the subset of the training set based on the angles list.
     offlineSubset = signals[signals$angle %in% angles, ]
     keepVars = c("posXY","posx","posy")
+    }
+    else
+    { # cross validation branch. Select the single angle from the signals (mock of online data derived during CV)
+      offlineSubset = signals[signals$angle == sample(refs,size=1),]
+      keepVars = c("posXY","posx","posy","orientation","angle")
+    }
     
-    #calculate the means
+    #calculate the means and constitute the reshaped data frame with jsut the fields of interest.
     byLocation = 
       with(offlineSubset, by(offlineSubset, list(posXY),
                              function(x){
@@ -289,23 +302,22 @@ with(offline, sum(angle==315&mac=="00:0f:a3:39:e1:c0"&posx==24&posy==4))
                                cbind(ans,y)
                              }))
     
-    newDataSS = do.call("rbind",byLocation)
+    newDataSS = do.call("rbind",byLocation)  # return the data.frame (note - not matrix because matrices can only have a single data type)
     return(newDataSS)
   }
   
-  ##Sample of how to return the subsetted training set.
-  ##trainnSS = getTrainingSubset(130,3,dfSummary)
-  
-  
   ##Find the single nearest neighbour to the passed in R^6 vector of readings.
   findNN = function(newSignal, trainSubset){
-    diffs = apply(trainSubset[,4:9],1,function(x)x-newSignal)
-    dists = apply(diffs,2,function(x)sqrt(sum(x^2)))
-    closest = order(dists)
+    diffs = apply(trainSubset[,4:9],1,function(x)x-newSignal)  # apply iterates over margin set by second para (1=rows,2=cols)
+    dists = apply(diffs,2,function(x)sqrt(sum(x^2))) # calculate the sum of squared differences.
+    closest = order(dists) #sort in ascending order.
     return (trainSubset[closest,1:3])
   }
   
+  ## NN prediction of each row based on the k neighbour average and numAngle subet.
+  ## Not optimised for Cross validation.
   # @k = number of nearest neighbours to base prediction on.
+  # @ret = data.frame containing the NN estimate
   predXY = function(newSignals, newAngles, trainData, numAngles=1,k=3){
     # init a list. One item for each test signal passed in.
     closeXY = list(length = nrow(newSignals))
@@ -313,26 +325,45 @@ with(offline, sum(angle==315&mac=="00:0f:a3:39:e1:c0"&posx==24&posy==4))
     #get the NN for each test based on 3 close angles.
     for (i in 1:nrow(newSignals)){
       trainSS = getTrainingSubset(newAngles[i],numAngles,trainData)
-      closeXY[[i]]=findNN(newSignal=as.numeric(newSignals[i, ]),trainSS)
+      closeXY[[i]]=findNN(newSignal=as.numeric(newSignals[i, ]),trainSS)  ## get the k nearest neighbours.
     }
-    # take the averages over each coordinate.
+    # take the averages over each coordinate of the neighbours.
     estXY=lapply(closeXY,function(x) sapply(x[,2:3],function(x) mean (x[1:k])))
     estXY = do.call("rbind",estXY)
     return (estXY)
   }
   
+  ## Optimised verison of the predXY function used cumsum /(1:k) to calculate all 1:k NN averages in one pass
+  # @k is the maximum number of nearest neighbour averages to calculate.
+  # @ ret = list of matrices whose length is the length of newSignals and each matrix has k rows, one for each value of K.
+  predXY_Optimised = function(newSignals, newAngles, trainData, numAngles=1,k=3){
+    # init a list. One item for each test signal passed in.
+    closeXY = list(length = nrow(newSignals))
+    #get the NN for each test based on 3 close angles.
+    for (i in 1:nrow(newSignals)){
+      trainSS = getTrainingSubset(newAngles[i],numAngles,trainData)
+      closeXY[[i]]=findNN(newSignal=as.numeric(newSignals[i, ]),trainSS)
+    }
+    # take the averages over each coordinate of the neighbours for each of the NN counts 1:k
+    # returns a list of matrices where each row of the matrix corresponds to one value of k.
+    list_estXY=lapply(closeXY,function(x) sapply(x[,2:3],function(x) t(cumsum(x[1:k])/(1:k))))
+    return (list_estXY)
+  }
+  
+  # Test: predict and check error for k=3
   estXYK3 = predXY(newSignals = onlineSummary[,6:11],
                    newAngles = onlineSummary[,4],
-                   dfSummary,numAngles=1,k=3)
+                   dfSummary,numAngles=3,k=5)
   
-  #Visualise the errors
+  #Visualise the errors for k=3 prediction. Plot endpoints and lines showing the actual vs predicted.
   par(new=FALSE) # cause clearing the screen before plotting the next chart
   plot(dfSummary$posx,dfSummary$posy,'p',cex=0.3,col='blue',xlim=c(0,30),ylim=c(0,15),main="Plot of Test Readings vs NN Estimates")
   par(new=TRUE)
   errorData = cbind(onlineSummary$posx,onlineSummary$posy,estXYK3[,1],estXYK3[,2])
+  #loop through the estimates and plot
   for (i in 1:nrow(errorData)){
-    m=t(matrix(errorData[i,],ncol=2))
-    plot(m[1,1],m[1,2],'p',cex=0.8,xlim=c(0,30),ylim=c(0,15),xlab='',ylab='')
+    m=t(matrix(errorData[i,],ncol=2)) # reshape the 4 list into a 2x 2 matrix suitable for using the generic plot.
+    plot(m[1,1],m[1,2],'p',cex=0.8,xlim=c(0,30),ylim=c(0,15),xlab='',ylab='') # supress labels to avoid overwritting. Require ranges as plot will change scale to suit plot.
     par(new=TRUE)
     plot(m[2,1],m[2,2],'p',cex=0.3,xlim=c(0,30),ylim=c(0,15),xlab='',ylab='')
     par(new=TRUE)
@@ -340,7 +371,109 @@ with(offline, sum(angle==315&mac=="00:0f:a3:39:e1:c0"&posx==24&posy==4))
     par(new=TRUE)
   }
   
+  ## Calculate the sum of square errors for the estimate
+  #@ret value of SSE.
+  getEstimateError = function(est,actual){
+    sum(rowSums((est-actual)^2))
+  }
+  
+ print("NN Prediction Error ")
+ sapply(list(errorData[,1:2]),getEstimateError,errorData[,3:4]) #apply error function with errorData[,1:2] as first para and 3:4 as second.
+ 
+ ## Try using linear regressions on reading features to predict location. 
+ ## Predict each coordiate independantly (ignores the correlation between a x and y)
+ ## INCOMPLETE.
+ 
+ ## NN prediction of each row based on the k neighbour average and numAngle subet.
+ # @k = number of nearest neighbours to base prediction on.
+ # @ret = data.frame containing the NN estimate
+ #predRegressionXY = function(newSignals, newAngles, trainData, numAngles=1){
+   # init a list. One item for each test signal passed in.
+#   estXY = list(length = nrow(newSignals))
+   
+#   for (i in 1:nrow(newSignals)){
+ #    trainSS = getTrainingSubset(newAngles[i],numAngles,trainData)
+     
+     ## build regression model on x and y independantly
+#     form = as.formula(paste("posx~",paste(names(trainSS[,4:9]),collapse="+")))
+#     mod.x = lm(form,data=trainSS)
+#     mod.y = lm(form,data=trainSS)
+
+#     pred.x = predict(mod.x,newdata=newSignals[i,6:11])
+#     pred.y = predict(mod.y,newdata=newSignals[i,6:11])
+     
+#     closeXY[[i]]=c(pred.x,pred.y)
+#   }
+#   estXY = do.call("rbind",estXY)
+#   return (estXY)
+# }
+
+#pred = predRegressionXY(onlineSummary[,6:11],newAngles = dfSummary[,4],dfSummary,numAngles=3)
+ 
+### Cross validation to determine the optimal k.
+ 
+v=11 # the number of folds
+permuteLocs = sample(unique(dfSummary$posXY)) # randow reordering ( sample size equal total size)
+permuteLocs = matrix(permuteLocs, ncol=v,nrow=floor(length(permuteLocs)/v)) # reshape into matrix where each column is a fold.
+
+onlineCVSummary = getTrainingSubset(signals=dfSummary,blSampleAngle = TRUE)
+
+blOptimised=TRUE
+
+K = 20
+err = rep(0,K)
+
+if (blOptimised==FALSE){
+for (j in 1:v){
+  onlineFold = subset(onlineCVSummary, posXY %in% permuteLocs[,j])   # use test set based on the posXY in the j column.
+  offlineFold = subset(dfSummary, posXY %in% permuteLocs[,-j]) # use the training set based on the posXY in everything but the jth column
+  actualFold = onlineFold[,c("posx","posy")]  # get just the actual co-ords.
+  
+    for (myk in 1:K)  # rerun the estimation for each k seperately.
+    {
+      estFold = predXY(newSignals = onlineFold[,6:11],
+                       newAngles = onlineFold[,4],
+                       offlineFold, numAngles = 3, k=myk)
+      err[myk] = err[myk] + getEstimateError(estFold,actualFold)
+    }
+  print(paste("iteration ",j))
+  print(err[1])
+}
+} else {
+  for (j in 1:v){
+    
+    ## optimised
+    onlineFold = subset(onlineCVSummary, posXY %in% permuteLocs[,j])
+    offlineFold = subset(dfSummary, posXY %in% permuteLocs[,-j])
+    actualFold = onlineFold[,c("posx","posy")]
+    
+    list_estFold = predXY_Optimised(newSignals = onlineFold[,6:11],
+                       newAngles = onlineFold[,4],
+                       offlineFold, numAngles = 3, k=K)
+    
+    # loop over each value of k (being the number of nearest neighbours)
+    for (i in 1:K){ 
+      for (x in 1:length(list_estFold)){  # from the list of matrices returned (each list entry corresponds to a posXY from the onlineFold) select the row corresponding to i nearest neighbours
+        if (x==1) {
+          estFold = list_estFold[[x]][i,] # intialise the estimate of the fold
+      } else {
+        estFold = rbind(estFold,list_estFold[[x]][i,]) # pull the appropriate row.
+      }
+      }
+      err[i] = err[i] + getEstimateError(estFold,actualFold) # add the error for the kth NN estimates on this the jth fold.
+    }
+    
+    print(paste("iteration ",j, "Error of k=1 (should be increasing)"))
+    print(err[1])
+  }
+}
+## Plot the CV error curve
+par(new==FALSE)
+par(mfrow=c(1,1))
+plot(seq(1:K),err,"b",main="Cross validation error vs number of nearest neighbours.",xlab="Number of nearest neighbours",ylab=paste("Cummulative error over all folds(",v,")"))
+
+
   
   
   
-  
+ 
