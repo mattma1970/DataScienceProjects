@@ -472,8 +472,35 @@ par(new==FALSE)
 par(mfrow=c(1,1))
 plot(seq(1:K),err,"b",main="Cross validation error vs number of nearest neighbours.",xlab="Number of nearest neighbours",ylab=paste("Cummulative error over all folds(",v,")"))
 
+##############################################################################################333
+# Additional exercises: Load data into a dataframe with one row per line in the input file.
 
-  
-  
+txtData = readLines("Data/offline.final.trace.txt")
+
+getAPMacs = function(x){
+  tokens = strsplit(x,"[;=,]")[[1]]
+  # split the text line and wrap the list into a x4 matrix.
+  tmp = matrix(tokens[-(1:10)],ncol=4,byrow=TRUE)[,c(1,4)] ## at this stage all elements are char so can use a matrix.
+  # tmp only returns a matrix if there is more than one row otherwise it coerces it into a vector.
+  if (is.matrix(tmp))
+    tmp = matrix(matrix(tmp[tmp[,2]==3,1],ncol=1),dimnames=list(NULL,c("mac")))
+  else
+  {
+    # deal with items with just a single row.
+    if (tmp[2]==3) 
+      tmp =matrix(tmp[1],ncol=1,dimnames=list(NULL,c("mac")))
+    else 
+      tmp=NULL
+  }
+  return(tmp)
+}
+
+a=lapply(txtData[substr(txtData,1,1)!="#"],getAPMacs)
+a= unique(do.call('rbind',a))
+#create the empty data frame that will be populated on the second pass.
+df = data.frame(matrix(vector(),0,length(a),dimnames=list(NULL,t(a))))
+
+
+
   
  
