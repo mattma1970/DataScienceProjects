@@ -6,7 +6,7 @@ library(XML)
 scrapeData = 
   ## Get data from URL passed in. Drop heading and return character vector.
   #@intHeaderLines is the number (base 1) of the element marking the end of the header.
-  function(url,year=1999,intHeaderLines=6){
+  function(url,year=1999){
   txt=''
   doc=htmlParse(url)
   
@@ -28,16 +28,10 @@ scrapeData =
     txt=xmlValue(preNode[[1]])
   }
   if (txt!=''){
-    if (intHeaderLines>0){
-        lines = strsplit(txt,'\\r\\n')[[1]][-(1:intHeaderLines)]
-    } else {lines = strsplit(txt,'\\r\\n')[[1]] }
+        lines = strsplit(txt,'\\r\\n')[[1]]
   }
   else {
     lines = unlist(lines)
-    if (intHeaderLines>0)
-    {
-      lines = lines[-(1:intHeaderLines)]
-    }
   }
   
   print(t(c("year",year,"  #rows=",length(lines))))
@@ -87,15 +81,29 @@ getValByCol =
              if(startPos==-1)
                return (c(NA,NA))
              index = sum(startPos>=searchLocations)  # find the index in the searchLocations
-             c(searchLocations[index]+1,searchLocations[index+1]-1)
+             c(searchLocations[index]+1,searchLocations[index+1])
            },
            headerRow = headerRow, searchLocations=searchLocations)  #note using sapply not mapply as the paras headerrow and searchlocations are not in applied sequentially to the parameter of the function
   }
 
+removeStrayLines = 
+  # helper functon to remove blankl lines from the data
+  function(myData){
+    #get the empty and footnote (#,*) lines
+    emptyRowIndecies = grep("(^[[:blank:]]*$|^[#\\*])",myData)  # returns a vector of 1 based indicies.
+    if (length(emptyRowIndecies)>0){
+      myData = myData[-(emptyRowIndecies)]
+    }
+    return (myData) 
+  }
 
 extractVariables = 
   # take a vector char and split into a matrix of seperate variables. Data type remains char.
+  # @ret - returns a list of split out data sets.
   function(myData,varNames = c("name","home","ag","gun","net","time")){
+    
+    #first clean the data
+    myData = removeStrayLines(myData)
     # data will always have first row as the columns names and second row as the spacer row from which the column delimiter places will be foudn
     colDelimiters = getColumnLocs(myData[2])   #char locations of col boundaries
     liColBoundaries = getValByCol(varNames,myData[1],colDelimiters)   # the boundaries corresponding to the col names supplied
@@ -126,7 +134,7 @@ menURLs = c("cb99m.htm","cb003m.htm","results/2001/oof_m.html","results/2002/oof
 
 urls = paste(ubase,menURLs,sep="")
 years=1999:2012
-allMensResults = mapply(scrapeData,url = urls,year=years, intHeaderLines=rep.int(intHeaderRows,length(years)))
+allMensResults = mapply(scrapeData,url = urls,year=years)
 names(allMensResults)=1999:2012
 return(allMensResults)
   }
@@ -140,7 +148,25 @@ mensResults = getAllMensResults(intHeaderRows=0)
 # get cols of interest only and return a char matrix
 mensResultsMatrix = lapply(mensResults, extractVariables) 
 
-# parse values to appropriate type.
+## Ad hoc data cleaning
+# Parse values to appropriate type.
+age = sapply(mensResultsMatrix,function(x) as.numeric(x[,'ag']))
+boxplot(age,ylab="Age",xlab="Year") #Observe that 2003 and 2006 have something wrong. Check data. Find that data is right shift on place relative to the delimiting markers in header.
+#age2001 = mensResults[['2001']]
+#grep("^[[:blank:]]*$",mensResults[['2001']])
+
+# Remove small age values
+mensResultsMatrix = sapply(mensResultsMatrix, 
+                            function(x) {
+                              b= which(as.numeric(x[,'ag'])<5)
+                              if (length(b)>0)
+                                return(x[-b,])
+                              else
+                                return (x)
+                              })
+# deal with time
+
+
 
 
 
