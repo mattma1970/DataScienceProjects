@@ -164,8 +164,55 @@ mensResultsMatrix = sapply(mensResultsMatrix,
                               else
                                 return (x)
                               })
-# deal with time
+age = sapply(mensResultsMatrix,function(x) as.numeric(x[,'ag']))
+boxplot(age,ylab="Age",xlab="Year")
 
+# deal with time. time,gun, net is the order of preference for times.
+timeToMinutes = 
+  # convert a character vector in format hh:mm:ss or mm:ss to minutes.
+  function(x){
+    val=0
+    components = as.vector(strsplit(x,':')[[1]])
+    if (length(components)>0){
+      for (i in 1:length(components)){
+        val=val*60+as.numeric(gsub('[^[:digit:]]','',components[i])) #clear footnote markers
+       # print(c(x,components[i],val,as.numeric(gsub('[^[:digit:]]','',components[i]))))
+          }
+    }
+    #print(c(x,val))
+    return (val/60.0) #
+  }
+
+isAllNA = function(vecData){
+  if (sum(is.na(vecData))>length(as.vector(vecData))*0.85)
+      return (TRUE)
+      else
+        return (FALSE)
+}
+
+getUseableTime = 
+  # get the time from the data and convert it to minutes. 
+  # return a list of times.
+function(myData){
+  ret = list()
+   if (!isAllNA(myData[,'gun'])) {
+    ret = sapply(myData[,'gun'],timeToMinutes)
+   } else if (!isAllNA(myData[,'time'])){
+   ret = sapply(myData[,'time'],timeToMinutes)
+  }
+  else {
+    # fall back to net (assumes it exists. must check if this is true)
+   ret =sapply(myData[,'net'],timeToMinutes)
+  }
+  return(FinalTime=ret)
+}
+
+useableTimes = sapply(mensResultsMatrix,getUseableTime) 
+##found that 2001 has 2 instance where gun time is ommitted but available everywhere else
+##decisions to leave the zero values in there as impact on averages, and tracking of data willl be negligable
+
+##Add numerical time to results.
+mensResultsMatrix=mapply(cbind,mensResultsMatrix,useableTimes)
 
 
 
