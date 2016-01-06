@@ -1,7 +1,7 @@
 ## Webscraping the cherry blossom 10 mile race results for men 1999-2012
 
 library(XML)
-
+library(RColorBrewer)
 
 scrapeData = 
   ## Get data from URL passed in. Drop heading and return character vector.
@@ -114,8 +114,6 @@ extractVariables =
   }
 
 
-
-
 getAllMensResults = 
   # Get all the mens results for the cherryblossom race 1999-2012.
   # Returns list of results, one element per year.
@@ -138,6 +136,47 @@ allMensResults = mapply(scrapeData,url = urls,year=years)
 names(allMensResults)=1999:2012
 return(allMensResults)
   }
+
+################### Deal with times #############################################################
+timeToMinutes = 
+  # convert a character vector in format hh:mm:ss or mm:ss to minutes.
+  function(x){
+    val=0
+    components = as.vector(strsplit(x,':')[[1]])
+    if (length(components)>0){
+      for (i in 1:length(components)){
+        val=val*60+as.numeric(gsub('[^[:digit:]]','',components[i])) #clear footnote markers
+        # print(c(x,components[i],val,as.numeric(gsub('[^[:digit:]]','',components[i]))))
+      }
+    }
+    #print(c(x,val))
+    return (val/60.0) #
+  }
+
+isAllNA = function(vecData){
+  if (sum(is.na(vecData))>length(as.vector(vecData))*0.85)
+    return (TRUE)
+  else
+    return (FALSE)
+}
+
+getUseableTime = 
+  # get the time from the data and convert it to minutes. 
+  # return a list of times.
+  function(myData){
+    ret = list()
+    if (!isAllNA(myData[,'gun'])) {
+      ret = sapply(myData[,'gun'],timeToMinutes)
+    } else if (!isAllNA(myData[,'time'])){
+      ret = sapply(myData[,'time'],timeToMinutes)
+    }
+    else {
+      # fall back to net (assumes it exists. must check if this is true)
+      ret =sapply(myData[,'net'],timeToMinutes)
+    }
+    return(FinalTime=ret)
+  }
+######################## END deal with times #####################################
 
 
 ### Main   ########################
@@ -164,58 +203,53 @@ mensResultsMatrix = sapply(mensResultsMatrix,
                               else
                                 return (x)
                               })
-age = sapply(mensResultsMatrix,function(x) as.numeric(x[,'ag']))
-boxplot(age,ylab="Age",xlab="Year")
+intAge = sapply(mensResultsMatrix,function(x) as.numeric(x[,'ag']))
+mensResultsMatrix = mapply(cbind,mensResultsMatrix,age=intAge)
+boxplot(intAge,ylab="Age",xlab="Year")
 
-# deal with time. time,gun, net is the order of preference for times.
-timeToMinutes = 
-  # convert a character vector in format hh:mm:ss or mm:ss to minutes.
-  function(x){
-    val=0
-    components = as.vector(strsplit(x,':')[[1]])
-    if (length(components)>0){
-      for (i in 1:length(components)){
-        val=val*60+as.numeric(gsub('[^[:digit:]]','',components[i])) #clear footnote markers
-       # print(c(x,components[i],val,as.numeric(gsub('[^[:digit:]]','',components[i]))))
-          }
-    }
-    #print(c(x,val))
-    return (val/60.0) #
-  }
-
-isAllNA = function(vecData){
-  if (sum(is.na(vecData))>length(as.vector(vecData))*0.85)
-      return (TRUE)
-      else
-        return (FALSE)
-}
-
-getUseableTime = 
-  # get the time from the data and convert it to minutes. 
-  # return a list of times.
-function(myData){
-  ret = list()
-   if (!isAllNA(myData[,'gun'])) {
-    ret = sapply(myData[,'gun'],timeToMinutes)
-   } else if (!isAllNA(myData[,'time'])){
-   ret = sapply(myData[,'time'],timeToMinutes)
-  }
-  else {
-    # fall back to net (assumes it exists. must check if this is true)
-   ret =sapply(myData[,'net'],timeToMinutes)
-  }
-  return(FinalTime=ret)
-}
+######### Deal with time. time,gun, net is the order of preference for times.
 
 useableTimes = sapply(mensResultsMatrix,getUseableTime) 
 ##found that 2001 has 2 instance where gun time is ommitted but available everywhere else
 ##decisions to leave the zero values in there as impact on averages, and tracking of data willl be negligable
 
 ##Add numerical time to results.
-mensResultsMatrix=mapply(cbind,mensResultsMatrix,useableTimes)
+mensResultsMatrix=mapply(cbind,mensResultsMatrix,raceTime = useableTimes)
+#check if the racetime data is okay. FOund lots of NA is 2007 which result from people doing the 1/2 race. 
+sapply(mensResultsMatrix,function(x) which(is.na(x[,'raceTime'])))
+#D Drop the non-finishers
+mensResultsMatrix = mapply(function(m,t){  m[!is.na(t),]}, mensResultsMatrix,useableTimes)
+
+prepareDF = 
+  # pare down to just the data columns of interest and collapse list to single data frame.
+  # @myData is matrix representing a single year.
+  function(myData,year,sex){
+    retDF= data.frame(year=rep(year,nrow(myData)),
+                       sex = rep(sex,nrow(myData)),
+                       name = myData[,'name'],
+                       home=myData[,'home'],
+                       age=as.numeric(myData[,'age']),
+                       raceTime = as.numeric(myData[,'raceTime']),
+                       stringsAsFactors = FALSE)
+    invisible(retDF)
+  }
+
+mensDF = mapply(prepareDF,myData=mensResultsMatrix,year=1999:2012,sex=rep('male',14),SIMPLIFY=FALSE)
+mensFinalData = do.call(rbind,mensDF)
 
 
+#### Exploring the data.
+plot(raceTime~age,data=mensFinalData,ylim=c(40,180))
 
-
-
+Purples8A=paste(brewer.pal(9,"Purples")[8],"14",sep="")
+#manual smoothed scatter plot using points.
+mensFinalData$ageJitter= jitter(mensFinalData$age,amount=0.5)
+plot(raceTime~ageJitter,data=mensFinalData, type='n')
+points(mensFinalData$ageJitter,mensFinalData$raceTime,cex=0.5,pch=20,col=Purples8A)
+# using smooth scatter
+smoothScatter(y=mensFinalData$raceTime,x=mensFinalData$age,ylim=c(40,165),xlim=c(15,85))
+#chunk down into categories of age and explore the averages
+menFinalSub= subset(mensFinalData,raceTime>30 & !is.na(age) & age>5)
+ageCat = cut(menFinalSub$age,breaks=c(seq(15,75,10),90))
+plot(menFinalSub$raceTime~ageCat,xlab="age in years",ylab='run time(mins)')
 
