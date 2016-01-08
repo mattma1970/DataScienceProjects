@@ -2,6 +2,7 @@
 
 library(XML)
 library(RColorBrewer)
+library(lattice)
 
 scrapeData = 
   ## Get data from URL passed in. Drop heading and return character vector.
@@ -269,7 +270,7 @@ lines(x=age20to80,y=resid.io.pr,col='green',lwd=3,lty=2)
 # residual analysis shows that after 60 the residuals are increasingly positive which suggests that model breaks down after age=60.
 # try non-linear regressions techniques.
 
-menRes.io =  loess(raceTime~age, menFinalSub)
+menRes.ioR =  loess(raceTime~age, menFinalSub)
 menRes.io.pr = predict(menRes.io, data.frame(age=age20to80))
 
 over50 = pmax(0,menFinalSub$age-50)
@@ -291,3 +292,13 @@ names(overAgeSub)=paste("over",decades,sep="")
 pred = predict(lmPeicewise, newdata=cbind(data.frame(age=age20to80),overAgeSub))
 lines(y=pred,x=age20to80,lwd=3,col='red',lty=2)
 lines(y=menRes.io.pr,x=age20to80,col='green',lwd=3,lty=5)
+legend('topleft',col=c('black','red','green'),lty=c(1,2,5),lwd=3,legend=c('Hinge 50 years','Decade Piecewise linear','Loess'))
+
+# Age greading analysis
+# find the quickest time in each age from 20 to 80
+mensBestTimes = tapply(menFinalSub$raceTime,menFinalSub$age,min) # returns an array
+ageGradedTime = menFinalSub$raceTime/mensBestTimes[as.character(menFinalSub$age)]
+menFinalSub$ageGradedTime = ageGradedTime
+sub = subset(menFinalSub, age=30)
+#histogram(~ageGradedTime | age, data=menFinalSub)
+       
