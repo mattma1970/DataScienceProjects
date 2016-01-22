@@ -17,10 +17,10 @@ messagePaths = paste(dirMessageRoot,"Messages",dirNames,sep=.Platform$file.sep)
 messagesList = list.files(messagePaths)
 print (length(messagesList))
 
-print ("Message Data Files")
-sapply(messagePaths, function(x) 
-    print (paste(x,length(list.files(x))))
-  )
+#print ("Message Data Files")
+#sapply(messagePaths, function(x) 
+ #   print (paste(x,length(list.files(x))))
+#  )
 
 ## Read in the emails using readLines
 # Trial 
@@ -161,7 +161,7 @@ function(vEmail){
   # split the document on spaces and collect unique words
   vWords = unlist(strsplit(txtEmail[[1]]$content,"[[:blank:]]+"))
   vWords = vWords[nchar(vWords)>1]
-  #vWords = unique(vWords)  DO THIS LATER TO AVOID EXTRA WORK
+  vWords = unique(vWords)  # do this as we will be keeping the words for each document seperate in order to calculate probs
   invisible(vWords)
 }
 
@@ -205,3 +205,86 @@ msgWordLists = unlist(msgWordLists, recursive=FALSE)
 # flags to label the corpus document as spam or not. Repeat by apply rep elements wise. Final vector has 1-1 correspondance with a documents unique word vector
 flagIsSpam = rep(c(FALSE,FALSE,FALSE,TRUE,TRUE),numMsgs)
 
+####################################################################################################
+# Develop model for spam detection.
+####################################################################################################
+
+# Create train and test sample data using 1/3 of the spam  and ham messages from teh corpus
+
+intTotalEmails = length(flagIsSpam)    # total number of emails in full corpus
+intTotalSpam = sum(flagIsSpam==TRUE)
+intTotalHam = sum(flagIsSpam==FALSE)
+set.seed(418910)
+
+# random sample of indecies in range of spam and ham subsets.
+testSpamIds = sample(intTotalSpam,floor(intTotalSpam/3))
+testHamIds = sample(intTotalHam,floor(intTotalHam/3))
+
+testMsgWords = c((msgWordLists[flagIsSpam])[testSpamIds],(msgWordLists[!flagIsSpam])[testHamIds])
+trainMsgWords = c((msgWordLists[flagIsSpam])[-testSpamIds],(msgWordLists[!flagIsSpam])[-testHamIds])
+# and the correspoinding spam/ham flags
+testFlagIsSpam = rep(c(TRUE,FALSE),c(length(testSpamIds),length(testHamIds)))
+trainFlagIsSpam = rep(c(TRUE,FALSE),c(intTotalSpam-length(testSpamIds),intTotalHam - length(testHamIds)))
+
+# Get training set complete list of unique words from spam and ham
+#bow = unique(unlist(trainMsgWords))
+
+####################################################
+# create probability tables for spam and ham emails.
+####################################################
+# Naive bayes requires the probs of both the presence and the abscence so returned table should contain both.
+getProbTables=
+# wordlist is list of document (ham and spam) representing the entiring feature subspace on which to create the probs
+# blSpam a logical vector indicating whether the corresponding document in wordList is spam or ham
+# bow - bag of words is the unlisted collection of unique words in the 'corpus'
+# * uses vectorised approach rather than looping. 
+# returns a matrix with all relevant probability
+function(wordList, blSpam, bow = unique(unlist(wordList))){
+  # matrix with unique words from corpus in columns. Add dummy data of 0.5
+  wordTable = matrix(0.5, nrow = 4, ncol=length(bow), 
+                     dimnames = list(c("spam","ham","presentLogOdds","missingLogOdds"), bow)
+             )
+  # start collecting the counts. Note that we ensured that when a word vector for a single document was returned the words were unique.
+  # So, there is a one to one correspondance between the occurance of the word and the # of docs in which it is present.
+  counts.spam = table(unlist(lapply(wordList[blSpam],unique)))
+  wordTable["spam",names(counts.spam)] = counts.spam+0.5
+  
+  #ham equivalent
+  counts.ham = table(unlist(lapply(wordList[!blSpam],unique)))
+  wordTable["ham",names(counts.ham)] = counts.ham+0.5
+  
+  # get divisors
+  totalSpam = sum(blSpam)
+  totalHam = length(blSpam)-totalSpam
+  
+  # Naive Bayes uses the same trick as in MCVC whereby the normalisation constant is cancelled off by taking a ratio
+  # of probabilities. Using Log to convert division to substration and stretching the ranges from 0-1 to -inf 0 is a natural step.
+  # Moreover, in the Bayes expression we deal with P(content | spam). The Naive part is to assume that the content 
+  #consists of entirely independant collections of words and thus the probability of the content can be written
+  # as teh product of the probabilities of each word conditioned on being ham or spam. 
+  
+  # calc frequencies (probs)
+  wordTable["spam",]=wordTable["spam",]/(totalSpam+0.5)
+  wordTable["ham",]=wordTable["ham",]/(totalHam+0.5)
+  
+  #calc log odds
+  wordTable["presentLogOdds",]= log(wordTable["spam",]) - log(wordTable["ham",])
+  wordTable["missingLogOdds",]= log(1-wordTable["spam",]) - log(1-wordTable["ham",])
+  
+  invisible(wordTable)   # don't print the result to the screen when ths is running.
+
+}
+
+#calculate the probabilities for the training set.
+trainTable = getProbTables(trainMsgWords,trainFlagIsSpam)
+
+# ad-hoc test on spam (returns 239)
+newMesg = testMsgWords[[1]]
+newMesg = newMesg[!is.na(match(newMesg,colnames(trainTable)))]
+present = colnames(trainTable) %in% newMesg
+sum(trainTable["presentLogOdds",present])+sum(trainTable["missingLogOdds",!present])
+#ad-hoc test on ham (rturn -70)
+newMesg = testMsgWords[[length(testMsgWords)]]
+newMesg = newMesg[!is.na(match(newMesg,colnames(trainTable)))]
+present = colnames(trainTable) %in% newMesg
+sum(trainTable["presentLogOdds",present])+sum(trainTable["missingLogOdds",!present])
