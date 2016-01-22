@@ -275,16 +275,68 @@ function(wordList, blSpam, bow = unique(unlist(wordList))){
 
 }
 
+
+computeLLR=
+  #calculat the LLR for Naive Bayes classifier
+  # newMesg is a vector of UNIQUE WORDS extracted from a message
+  #probTable is the MATRIX of probs and logOdds calc for training words (cols)
+  function(newMesg,probTable){
+    #remove words never encountered in corpus
+    newMesg = newMesg[!is.na(match(newMesg,colnames(probTable)))]
+    #get logical vector of those words present
+    present = colnames(probTable) %in% newMesg
+    # calc LLR
+    ret = sum(probTable["presentLogOdds",present])+sum(probTable["missingLogOdds",!present])
+    return(ret)
+  }
+
 #calculate the probabilities for the training set.
 trainTable = getProbTables(trainMsgWords,trainFlagIsSpam)
 
 # ad-hoc test on spam (returns 239)
 newMesg = testMsgWords[[1]]
-newMesg = newMesg[!is.na(match(newMesg,colnames(trainTable)))]
-present = colnames(trainTable) %in% newMesg
-sum(trainTable["presentLogOdds",present])+sum(trainTable["missingLogOdds",!present])
+computeLLR(newMesg,trainTable)
+
 #ad-hoc test on ham (rturn -70)
 newMesg = testMsgWords[[length(testMsgWords)]]
-newMesg = newMesg[!is.na(match(newMesg,colnames(trainTable)))]
-present = colnames(trainTable) %in% newMesg
-sum(trainTable["presentLogOdds",present])+sum(trainTable["missingLogOdds",!present])
+computeLLR(newMesg,trainTable)
+
+#Run LLR calcs on whole test set
+testLLR = sapply(testMsgWords,computeLLR,trainTable)
+
+myData = as.data.frame(cbind(LLR=testLLR,isSpam=testFlagIsSpam))
+myData$isSpam = factor(myData$isSpam,levels=c(0,1),labels=c("Ham","Spam"))
+par(mar=c(5,5,5,5))
+boxplot(LLR~isSpam,data=myData)
+title("LLR calc for Spam Classifier",ylab="LLR",xlab='Classification')
+
+## Analysis of performance
+# Select a threshold for the LLR above which it is considered to be Spam.
+# Type 1 error in this case is incorrect classification as spam i.e its above threshold but is ham. The error rate is the
+# % of ham classified as spam
+
+typeIErrorRate=
+function(threshold,LLR,blSpam){
+  # number of ham classified as spam/#ham
+  sum(LLR>threshold & !blSpam)/sum(!blSpam)
+}
+typeIIErrorRate=
+  #incorrectly classifying spam as ham. Not such an important issue.
+  function(threshold,LLR,blSpam){
+    # number of ham classified as spam/#ham
+    sum(LLR<threshold & blSpam)/sum(blSpam)
+  }
+
+t=seq(-300,300,by=1)
+Type1 = sapply(t,typeIErrorRate,myData$LLR,(myData$isSpam=="Spam"))
+Type2 = sapply(t,typeIIErrorRate,myData$LLR,(myData$isSpam=="Spam"))
+perfData=data.frame(cbind(Threshold=t,typeIErrRate=Type1,typeIIErrRate=Type2))
+
+plot.new()
+plot(x=perfData$Threshold,y=perfData$typeIErrRate,type="n",xlab="Threshold for LLR",ylab="Error Rate", main="Type1 and Type 2 Error comparison")
+lines(x=perfData$Threshold,y=perfData$typeIErrRate,type="l",col="red")
+lines(x=perfData$Threshold,y=perfData$typeIIErrRate,type="l")
+legend(10,-10,c("Type1Err Rate","Type II Err Rate"),col=c(3,5))
+crossOverThresholdIndex = which(abs(perfData$typeIErrRate-perfData$typeIIErrRate)<0.001)
+print (t[crossOverThresholdIndex])
+
