@@ -57,7 +57,11 @@ severHeader =
       return  (ret)
     }
     else
-      stop()
+    {
+      # found that there was a not email named as if it were email bu contained no header/body, just a series of commands (in spam directory)
+      # Learning: ensure the graceful failure of any method used in the apply family.
+      return(list(header=NA,body=NA))  
+    }
   } 
 
 # remove attachments
@@ -78,10 +82,10 @@ function(vHeader)  {
         # strDelimiter = sub(".*boundary=\"(.*)\";.*","\\1",vHeader[intContentLine])  # failed as values for cntenttype key can wrap around lines and quotes mayb be missing
          
          # find the boundary key 
-          intBoundaryLoc = grep("boundary=",vHeader,ignore.case = TRUE)[1] #boundary token line number
+          intBoundaryLoc = grep("boundary=[:space:]*",vHeader,ignore.case = TRUE)[1] #boundary token line number
         # remove quotes and then extract the boundary token value.
           strTemp = gsub("\"","",vHeader[intBoundaryLoc])
-          strDelimiter = sub(".*boundary=([^;]+);?.*","\\1",strTemp)
+          strDelimiter = sub(".*boundary=([^;]+);?.*","\\1",strTemp, ignore.case = TRUE)
                 return (list(blHasAttachment=TRUE,strDelim=strDelimiter))
     }
     else 
@@ -118,6 +122,11 @@ dropAttachments =
       else if (length(lOpenLocs)>1 & length(lCloseLocs)==0){
         ## opening delimiter but no closing. Assume everything after 2nd delimiter is an attachment.
         vRet = lEmail$body[-(lOpenLocs[[2]]:length(lEmail$body))]
+      }
+      else if (length(lOpenLocs)>=0 & length(lCloseLocs)==0){
+        # there is most likely an opening boundary at the start of the email body so there is no way to tell if an attachemtn is present
+        # If this occurs then drop the email from corpus.
+        vRet = NA
       }
       else {
         vRet = lEmail$body[-(lOpenLocs[[2]]:lCloseLocs[[1]])]
@@ -156,7 +165,7 @@ function(vEmail){
   invisible(vWords)
 }
 
-
+ 
 
 getMsgWordsDirectory = 
   # Get the combined word vector for all words in all messagesin a child directory of the Message directory
@@ -183,9 +192,16 @@ getMsgWordsDirectory =
 
       invisible(listWordVectors)
             
-    }
+    } 
 
 #iterate of all directories and get the word vectors
-msgWordLists = lapply(dirNames,getMsgWordsDirectory)
+#msgWordLists is a list of list of character vectors. 
 
+msgWordLists = lapply(dirNames,getMsgWordsDirectory)
+numMsgs = sapply(msgWordLists,length)
+
+# cretae a single list where each item is a character vector of unqiue words in a single document from the corpus
+msgWordLists = unlist(msgWordLists, recursive=FALSE)
+# flags to label the corpus document as spam or not. Repeat by apply rep elements wise. Final vector has 1-1 correspondance with a documents unique word vector
+flagIsSpam = rep(c(FALSE,FALSE,FALSE,TRUE,TRUE),numMsgs)
 
