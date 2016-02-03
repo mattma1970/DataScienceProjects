@@ -1,3 +1,15 @@
+## Analysis wi-fi data of a mobile device inside a real building to determine the location of the device.
+## The dataset was provided from www.crawdad.org : Thomas, King, Stephan Kopf, Thamoas Haenselmann, 
+## Christian Lubberger and Wolf-gang Effelsberg. Data set mannheim/compass: v2008-04-11 and can be downloaded after
+## subscribing to CRAWDAD (free)
+## The data was collected from an experimental setup in a real building and soe contains significant amount of distortion
+## due to, among other things, device orientation, building fit out, obstacles, reflections and the drift inherent is 
+## device calibration as a result of collecting the data over a number of days.
+
+## The purpose of the analysis is to develop a predictive model to predict the location of the wi-fi device in 
+## an environment where the noise is significant effected by the built environment. 
+
+
 setwd('~/Documents/GitRepos/RRepos')
 
 library(codetools)

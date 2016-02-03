@@ -1,4 +1,7 @@
 ## Webscraping the cherry blossom 10 mile race results for men 1999-2012
+## The purpose of this exercise is primarily to scrape, extract, clean the data. 
+## Based on the Case Study Chapter 2 os Data Science in R: A case study approach.
+## Matt Ma 1/1/2016
 
 library(XML)
 library(RColorBrewer)
