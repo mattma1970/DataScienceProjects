@@ -2,8 +2,10 @@ import unicodecsv as unicsv
 import numpy as np
 import pandas as pd
 import re
-
 import os # misc OS functions
+
+# Naive Bayes classifier
+
 
 ## Globals
 data_path="./Messages"
@@ -51,7 +53,7 @@ def showMessageCounts():
 
 # TODO: Find python package for text preprocessing.
 # preprocessing methods and word extraction from a single email.
-class TextProcessing:
+class TextProcessor:
     def __init__(self):
         self.getStopWords()
 
@@ -226,7 +228,38 @@ class Emails:
         # sets pdSplitEmails, a dataframe with cols header and body and blIsSpam flag
         liSplitEmails = map(self._severHeader,self.liEmails)
         self.dfSplitEmails = pd.DataFrame(liSplitEmails)
+
+# Class represents the Naive Bayes filter singlton.
+class NaiveBayesFilter:
+    def __init(self):
+        pass
     
+    #probability tables.
+    dfProbability = pd.DataFrame(data=None, index=None, columns=('present','abscent'))
+
+    #The threshold for the LLR below which an email is considered spam.
+    dThreshold = 0.0
+    
+    # Calculate the log likihood of the content
+    # liLines of text making up the email
+    def LLR(self,liLines):
+        pass
+
+    # calculate the dfProbability table based on the training data passed int.
+    # dftraining data is df with col1=set of unique words for an email, col2=spam/ham tag
+    def trainFilter(self, dfTrainingData):
+        pass
+    
+
+    #calculate precision and recall
+    def evaluatePerformance(self, dfTest):
+        pass
+
+    #plot the recall performance vs threshold for range of thresholds
+    def plotPerformance(self,dfTest,dStartThresh,dfEndThresh):
+        pass
+
+
 ######## Main ###################################
 
 #Get all the file names for the message corpus
@@ -248,9 +281,9 @@ Train.severHeaders()
 #extract the boundary stringa and then find the boundary strings in the text. 
 liEmailsToDrop = Train.dealWithAttachments()
 Train.removeEmailsByiLoc(liEmailsToDrop)
-#text pre-porcessing 
 
-Tp = TextProcessing()
+#text pre-precessing 
+Tp = TextProcessor()
 Tp.dfEmails = Train.dfSplitEmails
 Tp.setTag(False)   # not spame
 Tp.toLower()
@@ -261,5 +294,5 @@ dfUWords = Tp.getUniqueWords()
 
 #Add spam/ham tags to the email word lists for use in calculating probabilities.
 
-
+#Collect all data into one dataframe and produce the probability tables. 
 
