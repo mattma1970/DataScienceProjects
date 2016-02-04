@@ -3,51 +3,19 @@ import numpy as np
 import pandas as pd
 import re
 import os # misc OS functions
+import random as rand
+import math
 
 # Naive Bayes classifier
 
 
 ## Globals
 data_path="./Messages"
+CONST_MIN_HEADER_SIZE=10
+DEBUG=True
+DEBUG_ATTACHMENTS=True
+MAX_WORD_LENGTH=20   # used to remove stray long words that are unlikely to be english words
 
-# helper functions for file loading
-def blIsValid(strName):
-    # Check that the file name conforms to the style we want.
-    invalidChars = re.compile('[^\.0-9abcdef]')
-    validFormat = re.compile('^\d{4,5}\.[0-9a-f]{10,}')
-    if not invalidChars.match(strName) and validFormat.match(strName):
-        return True
-    else:
-        return False
-    
-def getAllMessageFileNames(path='./Messages'):
-    # recursively walk the message directory tree and get the fully qualified list of files.
-    # return a dictionary with key=subdirectory name, 
-    #      value is pandas DataFrame of unqualified file names (FQName) and unqualifies name 'Name')
-    dicFileNames = {}
-    pwd = os.getcwd()
-    if path[0]=='.':
-        pwd = pwd+path.lstrip('.')
-    dirNames = os.listdir(pwd)    
-    for dirName in dirNames:
-        listFileNames = []
-        listFQFileNames = []
-        # compile list of names
-        for fn in os.listdir(os.path.join(pwd,dirName)):
-            if blIsValid(fn):  # targetin
-                listFQFileNames.append(os.path.join(pwd,dirName,fn))
-                listFileNames.append(fn)
-        #convert to pandas dataframe
-        df=pd.DataFrame({'FQNames':listFQFileNames,'Names':listFileNames})
-        df=df.sort('Names')
-        dicFileNames[dirName] = df
-    return (dicFileNames)
-
-# List the directories and file counts in each folder.
-def showMessageCounts():
-    allFiles_dic = getAllMessageFileNames()
-    for key in allFiles_dic.keys():
-        print "dir={} file={}".format(key,len(allFiles_dic[key]['Names']))
 
 
 
@@ -73,16 +41,16 @@ class TextProcessor:
         
     # set all body text to lower case
     def toLower(self):
-        for myRow in self.dfEmails.itertuples():
+        for i,myRow in self.dfEmails.iterrows():
             #myrow[0]=index value NOT row number; myrow[1]=header myrow[2]=body
-            liNewLowerLines = map(lambda x: x.lower(),myRow[2])
-            self.dfEmails.loc[myRow[0]]['body']=liNewLowerLines
+            liNewLowerLines = map(lambda x: x.lower(),myRow['body'])
+            self.dfEmails['body'][i]=liNewLowerLines
     
     #remove punctuation and other XML chars.
     def removePunc(self):
-        for myRow in self.dfEmails.itertuples():
-            liNewLines = [re.sub(self._rxIllegalChars,' ',line) for line in myRow[2]]
-            self.dfEmails.loc[myRow[0]]['body']=liNewLines
+        for i,myRow in self.dfEmails.iterrows():
+            liNewLines = [re.sub(self._rxIllegalChars,' ',line) for line in myRow['body']]
+            self.dfEmails['body'][i]=liNewLines
     
     #basic stemming. Remove ed,ing, ly
     #operates on dfEmail in place
@@ -92,66 +60,119 @@ class TextProcessor:
         rxING = '(ing)[\s\b]'
         rxLY = '(ly)[\s\b]'
 
-        for myRow in self.dfEmails.itertuples():
-                liNewLines = [re.sub(rxED,'',line) for line in myRow[2]]
-                liNewLines = [re.sub(rxING,'',line) for line in liNewLines]
-                liNewLines = [re.sub(rxLY,'',line) for line in liNewLines]
-                self.dfEmails.loc[myRow[0]]['body']=liNewLines        
-    
+        for i,myRow in self.dfEmails.iterrows():
+                liNewLines = [re.sub(rxED,' ',line) for line in myRow['body']]
+                liNewLines = [re.sub(rxING,' ',line) for line in liNewLines]
+                liNewLines = [re.sub(rxLY,' ',line) for line in liNewLines]
+                self.dfEmails['body'][i]=liNewLines        
     
     #get a list of unique words occuring in a single email.
     # remove stop words
     #returns dataframe rows=email,columns=uniquewords, isSpam boolean
-    def getUniqueWords(self):
-        dfUniqueWords = pd.DataFrame(columns=['words','isSpam'])
-        for myRow in self.dfEmails.itertuples():
+    def getUniqueWordsAndTag(self,maxLength=100):
+        liUniqueWords = []
+        for i,myRow in self.dfEmails.iterrows():
             setWords = set()
-            for line in myRow[2]:
+            for line in myRow['body']:
                 for word in line.split(' '):
-                    if len(word)>1 and word!=' ' and  not (word in self._stopWords):
+                    if len(word)>1 and word!=' ' and  not (word in self._stopWords) and len(word)<maxLength:
                         setWords.add(word)  #takes care of only adding unique words
-            dfUniqueWords.add({'words':setWords,'isSpam':self._blIsSpam})
-        return dfUniqueWords
+            liUniqueWords.append({'words':setWords,'isSpam':self._blIsSpam})
+        return pd.DataFrame(liUniqueWords)
 
 
 
 # class container helper functions that operate collections of emails.
+# Email data should be of one type only (ie.e either ham or spam)
 class Emails:
     def __init(self):
         pass
 
     liEmails = []  # holds the list of email texts.
     dfSplitEmails = pd.DataFrame(columns=('header','body'))# hold the header and body when seperated
+    isSpam = False  #flag indicating if spam or not. Applied to all emails in dfSplitEmails.
     
-    def subsetEmails(self,liFullDirectoryListing,liFileLocations):
-        # get a sample of emails from the full list and return list of lists of email lines of text
-        liEmails=[] #list of lists of text lines from each email
-        for i in liFileLocations:
-            f=open(liFullDirectoryListing['FQNames'].iloc[i])
-            lines=f.readlines()
-            f.close()
-            liEmails.append(map(lambda s: s.replace('\n',''),lines))
-        return liEmails   
+    # Import emails
+    # helper functions for file loading
+    def blIsValid(self,strName):
+        # Check that the file name conforms to the style we want.
+        invalidChars = re.compile('[^\.0-9abcdef]')
+        validFormat = re.compile('^\d{4,5}\.[0-9a-f]{10,}')
+        if invalidChars.match(strName) is None and validFormat.match(strName):
+            return True
+        else:
+            return False
+        
+    def getAllMessageFileNames(self,path='./Messages'):
+        # recursively walk the message directory tree and get the fully qualified list of files.
+        # return a dictionary with key=subdirectory name, 
+        #      value is pandas DataFrame of unqualified file names (FQName) and unqualifies name 'Name')
+        dicFileNames = {}
+        pwd = os.getcwd()
+        # if relative path specified get the the fully qualified name
+        pwd = os.path.join(pwd,'Messages')
+        if path=='./Messages':
+            dirNames = os.listdir(pwd)    # get directories in the current dir.
+        else:
+            dirNames = [path]           #else we have been passed a child directory
+            
+        for dirName in dirNames:
+            listFileNames = []
+            listFQFileNames = []
+            # compile list of names
+            for fn in os.listdir(os.path.join(pwd,dirName)):
+                if self.blIsValid(fn):  # targetin
+                    listFQFileNames.append(os.path.join(pwd,dirName,fn))
+                    listFileNames.append(fn)
+            #convert to pandas dataframe
+            df=pd.DataFrame({'FQNames':listFQFileNames,'Names':listFileNames})
+            df=df.sort('Names')
+            dicFileNames[dirName] = df
+        return (dicFileNames)    
+    
+    # List the directories and file counts in each folder.
+    def showMessageCounts(self,allFiles_dic):
+        allFiles_dic = self.getAllMessageFileNames()
+        for key in allFiles_dic.keys():
+            print "dir={} file={}".format(key,len(allFiles_dic[key]['Names']))    
 
-    def removeEmailsByiLoc(self,liEmailsToDrop):
-        self.dfSplitEmails = self.dfSplitEmails.drop(liEmailsToDrop)
+    def loadEmails(self,liFullDirectoryListing,liFileLocations=[]):
+        # get some or all emails from the full list and return list of lists of email lines of text
+        liEmails=[] #list of lists of text lines from each email
+        if len(liFileLocations)>0:
+            for i in liFileLocations:
+                #print liFullDirectoryListing['FQNames'].iloc[i]
+                f=open(liFullDirectoryListing['FQNames'].iloc[i])
+                lines=f.readlines()
+                f.close()
+                liEmails.append(map(lambda s: s.replace('\n',''),lines))
+        else:
+            for i,myRow in liFullDirectoryListing.iterrows():
+                f=open(myRow['FQNames'])
+                lines=f.readlines()
+                f.close()
+                liEmails.append(map(lambda s: s.replace('\n',''),lines))            
+        return liEmails   
    
     # Get the boundary string from headers in dfSplitEmails (via content-type key)
     # return a list of tuples containing rownumber and boundary string where attachment is present)
     def getBoundaryStrings(self):
         liBoundaryKeys = []
         reContentKey = re.compile('^(content-type)\s*:\s*([A-Za-z\/]+);',re.I)
-        reBoundaryKey = re.compile('.*(boundary)\s*=\s*([^;]+);?.*',re.I)
+        reBoundaryKey = re.compile('.*(boundary)\s*=\s*([^;]*);?.*',re.I)
         for i,myRow in self.dfSplitEmails.iterrows(): # get index and row (series) seperately
             blHasAttachment=False
             strBoundaryKey=''
-            for item in myRow['header']:
-                mContentKey = reContentKey.match(item)
-                mBoundaryKey = reBoundaryKey.match(item)
-                if mContentKey and "multi" in mContentKey.group(2).lower():
-                    blHasAttachment=True
-                if mBoundaryKey:  
-                    strBoundaryKey=mBoundaryKey.group(2).strip('" ')
+            try:
+                for item in myRow['header']:
+                    mContentKey = reContentKey.match(item)
+                    mBoundaryKey = reBoundaryKey.match(item)
+                    if mContentKey and "multi" in mContentKey.group(2).lower():
+                        blHasAttachment=True
+                    if mBoundaryKey:  
+                        strBoundaryKey=mBoundaryKey.group(2).strip('" ')
+            except:
+                print "problem at i={}".format(i)
             if blHasAttachment:
                 liBoundaryKeys.append([i,strBoundaryKey])
         return liBoundaryKeys
@@ -171,7 +192,7 @@ class Emails:
             # start markers are preceeded by two -'s. Closing ones are preceeded and followed by two dashes.
             rxStartBoundary = re.compile("-{2}"+row[1])
             rxEndBoundary = re.compile("-{2}"+row[1]+"-{2}")
-            for line in self.dfSplitEmails.iloc[row[0]]['body']:
+            for line in self.dfSplitEmails.loc[row[0]]['body']:
                 if rxEndBoundary.search(line)!=None:
                     liEndBoundaryLocs.append(intLineCounter)   
                 elif rxStartBoundary.search(line)!=None: 
@@ -183,10 +204,12 @@ class Emails:
     #Remove the attachments that may be embedded in the body of the email.
     # Attachments marked by boundary strings.
     # operates on dfSplitEmails in place.
-    # returns list of emails that have invalid boundarys and need to be discarded.
+    # no return value
     def removeAttachments(self,liBoundaries):
         # @liBoundaries - list of tuples of lists. [ iloc in df,[list of start locations],[list of end loc]
         liEmailsToRemove = [] # iloc of emails to remove from dfSplitEmails.
+        liTempEmails = []
+        #print self.dfSplitEmails.head()
         for row in liBoundaries:
             # check that the pairing of the start end/markers make sense.
             # i.e there is an opening, a start and a closing occurence of the boundary string. 
@@ -194,12 +217,16 @@ class Emails:
             if len(row[1])>=2 and len(row[2])>=1:
                 intAttachStartLoc = row[1][1]
                 intAttachEndLoc = row[2][-1]
-                liTempEmailBody = self.dfSplitEmails.iloc[row[0]]['body'][row[1][0]+1:intAttachStartLoc]
-                liTempEmailBody.append(self.dfSplitEmails.iloc[row[0]]['body'][intAttachEndLoc+1:])
-                self.dfSplitEmails.iloc[row[0]]['body']=liTempEmailBody
+                ##Learning: iLoc etc are select statements that create new objects and hence changes to new objects dont' propogate.
+                ##Access object contents vi (reversed) indexation df[column][row index]
+                ##Alternatively could use .xs method and set copy=False to prevent copy being created.
+                del self.dfSplitEmails['body'][row[0]][intAttachStartLoc:(intAttachEndLoc+1)]
+                del self.dfSplitEmails['body'][row[0]][row[1][0]]
             else:
-                liEmailsToRemove.append(row[0])
-        return liEmailsToRemove
+                self.dfSplitEmails['body'][row[0]]=[] # delete the email. TODO ensure that empty emails are not included in further analysis.
+                self.dfSplitEmails['header'][row[0]]=[]
+                
+            
     
     # Locate and remove attachments
     # Return a list of emails that should be dropped due to mismatched boundary strings.
@@ -207,10 +234,15 @@ class Emails:
     def dealWithAttachments(self):
         liBStrings= self.getBoundaryStrings()
         liBStringLocs = self.getBoundaryStringLocs(liBStrings)
-        liEmailsToDrop = self.removeAttachments(liBStringLocs)        
-        return liEmailsToDrop
-    
-        
+        self.removeAttachments(liBStringLocs) 
+        if DEBUG_ATTACHMENTS:
+            print "Locating remaining boundary tags"
+            for i,myRow in self.dfSplitEmails.iterrows():
+                for lines in myRow['body']:
+                    if 'boundary' in lines.lower():
+                        print "index {}, {} ".format(i,lines)
+            print "End locating boundary tags"
+            
     def _severHeader(self,liText):
         # Get the seperator for header of a single email.
         # @liText is the lines of text for a single email.
@@ -220,8 +252,10 @@ class Emails:
             loc = liText.index('')
         except:
             pass
-        if loc!=-1: # if no split then throw the record away as its unusable
-            return ({'header':liText[0:loc],'body':liText[loc+1:len(liText)]})
+        if loc!=-1 and loc>CONST_MIN_HEADER_SIZE: # if no split then throw the record away as its unusable
+            return ({'header':list(liText[0:loc]),'body':list(liText[loc+1:len(liText)])})
+        else:
+            return ({'header':[],'body':[]})
 
     def severHeaders(self):
         # liEmails is a list of list of email text lines.
@@ -229,27 +263,109 @@ class Emails:
         liSplitEmails = map(self._severHeader,self.liEmails)
         self.dfSplitEmails = pd.DataFrame(liSplitEmails)
 
-# Class represents the Naive Bayes filter singlton.
+
+
+# Class represents the Naive Bayes filter singleton.
 class NaiveBayesFilter:
     def __init(self):
         pass
     
+    #All emails pre-processed and ready for inputing into training alg,.
+    _dfPreprocessedEmails = pd.DataFrame(columns=('words','isSpam'))
+    
     #probability tables.
     dfProbability = pd.DataFrame(data=None, index=None, columns=('present','abscent'))
-
+    bow = [] #Bag of words. A list of unique words in the whole corpus. A feature vector is a vector with one coordinate per  bow word.
+    
     #The threshold for the LLR below which an email is considered spam.
     dThreshold = 0.0
+    
+    #totals
+    _intTotalSpamEmails = 0
+    _intTotalHamEmails = 0
     
     # Calculate the log likihood of the content
     # liLines of text making up the email
     def LLR(self,liLines):
         pass
 
+    #Load get all the emails in the ./Message directory.
+    #Deal with each Dir one at a time and tag emails as ham/spam
+    #directoryList - list of relative directory names and correspondig tag isSpam.
+    # indx a list of index labels to select emails to work with.
+    def importParseCorpus(self, directoryList, indx=[]):
+        liEmailDFs = [] # a list used to accumulate directories of emails before concatinating them.
+        i =0
+        for strDir in directoryList['dir']:
+            eEmails = Emails()
+            if DEBUG:
+                print ("start load {}".format(strDir))
+            #get file names in the current directory.
+            allFiles_dic = eEmails.getAllMessageFileNames(directoryList['dir'][i])
+            #eEmails.showMessageCounts(allFiles_dic)            
+
+            # get the sample emails from easy_ham folder
+            if len(indx)>0:
+                eEmails.liEmails = eEmails.loadEmails(allFiles_dic[directoryList['dir'][i]],indx)
+            else:
+                eEmails.liEmails = eEmails.loadEmails(allFiles_dic[directoryList['dir'][i]])
+                
+            blIsSpam = directoryList['isSpam'][i]
+            
+            # split header and body using the blank line delimiter that seperates them
+            eEmails.severHeaders()
+            #remove attachments from the bodies. Find the Content-Type key in the header, 
+            eEmails.dealWithAttachments()
+            #text pre-precessing 
+            Tp = TextProcessor()
+            Tp.dfEmails = eEmails.dfSplitEmails
+            Tp.setTag(blIsSpam)  
+            Tp.toLower()
+            Tp.removePunc()
+            Tp.stem()
+            #Extract the unique words from emails. Create a list of words for each email.
+            dfWords = Tp.getUniqueWordsAndTag()
+            #print len(dfWords)
+            liEmailDFs.append(Tp.getUniqueWordsAndTag(MAX_WORD_LENGTH)) ## add to df list until finished importing all emails.
+            i+=1
+            emailsAdded = len(liEmailDFs[-1])
+            if blIsSpam:
+                self._intTotalSpamEmails+=emailsAdded
+            else:
+                self._intTotalHamEmails+=emailsAdded
+                
+            if DEBUG:
+                print "End loading {}. Emails processed {}".format(strDir,emailsAdded)
+              
+                       
+        self._dfPreprocessedEmails = pd.concat(liEmailDFs)
+        #print len(self._dfPreprocessedEmails)
+        
     # calculate the dfProbability table based on the training data passed int.
-    # dftraining data is df with col1=set of unique words for an email, col2=spam/ham tag
-    def trainFilter(self, dfTrainingData):
-        pass
+    # flTrainingPercent is floating point value representing the portion of preprocessed data use for training. 
+    # The balance to be used for testing. 
+    # Returns a list of row numbers for _dfPreprocessed emails.
+    def splitCorpus(self, flTrainingPercent):
+     #Split the preprocessed data into training and test emails. 
+        rand.seed(418910)
+        totalEmails=self._intTotalSpamEmails+self._intTotalHamEmails
+        trainHamIdx = rand.sample(range(0,self._intTotalHamEmails),int(math.floor(self._intTotalHamEmails*flTrainingPercent)))
+        trainSpamIdx = rand.sample(range(self._intTotalHamEmails,totalEmails),int(math.floor(self._intTotalSpamEmails*flTrainingPercent)))
+
+        trainIdx = trainHamIdx+trainSpamIdx
+        setTestIdx= set(range(0,totalEmails))
+        setTrainIdx = set(trainIdx)
+        setTestIdx = setTestIdx-setTrainIdx
+        testIdx = list(setTestIdx)
+
+        if DEBUG:
+            print "Length of training set {}: Length of test set {}".format(len(trainIdx),len(testIdx))
+        
+        return trainIdx,testIdx
     
+    def trainFilter(self,trainIdx):
+        pass
+        
 
     #calculate precision and recall
     def evaluatePerformance(self, dfTest):
@@ -258,41 +374,48 @@ class NaiveBayesFilter:
     #plot the recall performance vs threshold for range of thresholds
     def plotPerformance(self,dfTest,dStartThresh,dfEndThresh):
         pass
-
+    
+    # Get bag of words.
+    #if list specified then only process those row numbers (iloc)
+    def createBOW(self,liIndecies=[]):
+        #loop over _drPreprocessedEmails and get one consolidated list of unique words.
+        setWords = set()
+        if len(liIndecies)==0:
+            for i,myRow in self._dfPreprocessedEmails.iterrows():
+                if len(setWords)==0:
+                    setWords = myRow['words']
+                else:
+                    setWords=setWords.union(myRow['words'])
+                #print len(setWords)
+        else:
+            for i in liIndecies:
+                if len(setWords)==0:
+                    setWords=self._dfPreprocessedEmails.iloc[i]['words']
+                else:
+                    setWords=setWords.union(self._dfPreprocessedEmails.iloc[i]['words'])
+                    
+        self.bow=list(setWords)
+        if DEBUG:
+            print "BOW: Length of BOW {}".format(len(self.bow))
+            
 
 ######## Main ###################################
 
 #Get all the file names for the message corpus
 
-allFiles_dic = getAllMessageFileNames()
-showMessageCounts()
-
-Train = Emails() ## Object to hold emails while preparing them.
-
 # list of indecies of training emails to use while creating algorithm
-indx = [0,1,2,3,4,14,26,67,68,328,403,426,515,851,970]
-# get the sample emails from easy_ham folder
-Train.liEmails = Train.subsetEmails(allFiles_dic['easy_ham'],indx)
+#indx = [0,1,2,3,4,14,26,67,68,328,403,426,515,851,970]
+#indx=[0,1,2,3,4,14,26,67,68,328,403]
+indx=[]
+directoryList = {'dir':['easy_ham','easy_ham_2','hard_ham','spam','spam_2'],'isSpam':[False,False,False,True,True]}
+#directoryList = {'dir':['easy_ham'],'isSpam':[False]}
 
-# split header and body using the blank line delimiter that seperates them
-Train.severHeaders()
+#create Naive Bayes Instance
+NB=NaiveBayesFilter()
+#load the emails and preprocess them to produce a list of unque word sets per email.
+NB.importParseCorpus(directoryList,indx)  # get jsut the subset for developing with. 
 
-#remove attachments from the bodies. Find the Content-Type key in the header, 
-#extract the boundary stringa and then find the boundary strings in the text. 
-liEmailsToDrop = Train.dealWithAttachments()
-Train.removeEmailsByiLoc(liEmailsToDrop)
-
-#text pre-precessing 
-Tp = TextProcessor()
-Tp.dfEmails = Train.dfSplitEmails
-Tp.setTag(False)   # not spame
-Tp.toLower()
-Tp.removePunc()
-Tp.stem()
-dfUWords = Tp.getUniqueWords()
-#Extract the unique words from emails. Create a list of words for each email.
-
-#Add spam/ham tags to the email word lists for use in calculating probabilities.
+trainIdx,testIdx = NB.splitCorpus(0.66)
+NB.createBOW(trainIdx)
 
 #Collect all data into one dataframe and produce the probability tables. 
-
