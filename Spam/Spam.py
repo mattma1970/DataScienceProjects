@@ -275,7 +275,7 @@ class NaiveBayesFilter:
     _dfPreprocessedEmails = pd.DataFrame(columns=('words','isSpam'))
     
     #probability tables.
-    dfProb = pd.DataFrame(columns=('present','abscent'))
+    dfProb = pd.DataFrame(columns=('words','pPresSpam','pPresHam','pAbsSpam','pAbsHam'))
     liBOW = [] #Bag of words. A list of unique words in the whole corpus. A feature vector is a vector with one coordinate per  bow word.
     
     #The threshold for the LLR below which an email is considered spam.
@@ -285,10 +285,7 @@ class NaiveBayesFilter:
     _intTotalSpamEmails = 0
     _intTotalHamEmails = 0
     
-    # Calculate the log likihood of the content
-    # liLines of text making up the email
-    def LLR(self,liLines):
-        pass
+ 
 
     #Load get all the emails in the ./Message directory.
     #Deal with each Dir one at a time and tag emails as ham/spam
@@ -364,6 +361,10 @@ class NaiveBayesFilter:
         
         return trainIdx,testIdx
     
+    
+          
+         
+         
     def trainFilter(self,trainIdx):
         # Method to create conditional probabilities tables for training data.
         # @trainIdx is a list of row numbers in dfPreprocessedEmails included inthe training set. 
@@ -385,18 +386,30 @@ class NaiveBayesFilter:
             print dfUnlistedWords['isSpam']['yes'] # smaple accessor
             
         #get total spam and ham counts
-        intTotalSpamEmails= float(sum(self._dfPreprocessedEmails['isSpam']))
+        intTotalSpamEmails= float(sum(dfTrainingSet['isSpam']))
         intTotalHamEmails = float(len(dfTrainingSet)-intTotalSpamEmails)
         
         liProbTables = [] #list of dictionaries to convert to df
         for word in self.liBOW:
-            probPresSpam =float(dfUnlistedWords['isSpam'][word]))/intTotalSpamEmails
-            probPresHam = float(dfUnlistedWords['isSpam'][word]==False)/intTotalHamEmails
-            print ProbPresentHam
+            probPresSpam=0.0
+            probPresHam=0.0
+            try:
+                probPresSpam =float(dfUnlistedWords['isSpam'][word][True])/intTotalSpamEmails
+            except:
+                pass
+            
+            try:
+                probPresHam = float(dfUnlistedWords['isSpam'][word][False])/intTotalHamEmails
+            except:
+                pass
+            
             liProbTables.append((word,probPresSpam,probPresHam,1.0-probPresSpam,1.0-probPresHam))
             
         
-        return pd.DataFrame(liProbTables)
+        ret= pd.DataFrame(liProbTables,columns=('word','pPresSpam','pPresHam','pAbsSpam','pAbsHam'))
+        ret.set_index(ret['word'])
+        self.dfProb=ret
+        return ret
         
             
 
@@ -430,18 +443,36 @@ class NaiveBayesFilter:
         self.liBOW=list(setWords)
         if DEBUG:
             print "BOW: Length of BOW {}".format(len(self.liBOW))
-            
-
+    
+        
+    # Calculate the log likihood of the content
+    # setLines collection of unique preprocessed words in the email
+    def LLR(self,setWords):
+        probCHam =0.0
+        probCSpam=0.0
+        
+                 
+        for i, tProbs in self.dfProb.iterrows():
+            if tProbs['word'] in setWords:
+                    probCHam+=math.log(tProbs['pPresHam']+0.5)
+                    probCSpam+=math.log(tProbs['pPresSpam']+0.5)
+            else:
+                probCHam+=math.log(tProbs['pAbsHam']+0.5)
+                probCSpam+=math.log(tProbs['pAbsSpam']+0.5)                
+            #if DEBUG:
+                #print "Probs Ham {},Spam {}".format(probCHam,probCSpam)
+        return (probCHam-probCSpam)      
+    
 ######## Main ###################################
 
 #Get all the file names for the message corpus
 
 # list of indecies of training emails to use while creating algorithm
 #indx = [0,1,2,3,4,14,26,67,68,328,403,426,515,851,970]
-indx=[0,1,2,3,4,14,26,67,68,328,403]
-#indx=[]
-#directoryList = {'dir':['easy_ham','easy_ham_2','hard_ham','spam','spam_2'],'isSpam':[False,False,False,True,True]}
-directoryList = {'dir':['easy_ham','spam'],'isSpam':[False,True]}
+#indx=[0,1,2,3,4,14,26,67,68,328,403]
+indx=[]
+directoryList = {'dir':['easy_ham','easy_ham_2','hard_ham','spam','spam_2'],'isSpam':[False,False,False,True,True]}
+#directoryList = {'dir':['easy_ham','spam'],'isSpam':[False,True]}
 
 #create Naive Bayes Instance
 NB=NaiveBayesFilter()
@@ -450,5 +481,10 @@ NB.importParseCorpus(directoryList,indx)  # get jsut the subset for developing w
 #get the list of training vs testing data sets. 
 trainIdx,testIdx = NB.splitCorpus(0.66)
 NB.createBOW(trainIdx)
-b=NB.trainFilter(trainIdx)
-
+NB.trainFilter(trainIdx)
+# run test
+#get first test email
+print "Test Email"
+print NB._dfPreprocessedEmails.iloc[testIdx]['isSpam']
+for i in testIdx:
+    print "Is spam {}; LLR = {}".format(NB._dfPreprocessedEmails.iloc[i]['isSpam'],NB.LLR(NB._dfPreprocessedEmails.iloc[i]['words']))
