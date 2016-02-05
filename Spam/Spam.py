@@ -5,6 +5,7 @@ import re
 import os # misc OS functions
 import random as rand
 import math
+import itertools
 
 # Naive Bayes classifier
 
@@ -274,8 +275,8 @@ class NaiveBayesFilter:
     _dfPreprocessedEmails = pd.DataFrame(columns=('words','isSpam'))
     
     #probability tables.
-    dfProbability = pd.DataFrame(data=None, index=None, columns=('present','abscent'))
-    bow = [] #Bag of words. A list of unique words in the whole corpus. A feature vector is a vector with one coordinate per  bow word.
+    dfProb = pd.DataFrame(columns=('present','abscent'))
+    liBOW = [] #Bag of words. A list of unique words in the whole corpus. A feature vector is a vector with one coordinate per  bow word.
     
     #The threshold for the LLR below which an email is considered spam.
     dThreshold = 0.0
@@ -364,8 +365,40 @@ class NaiveBayesFilter:
         return trainIdx,testIdx
     
     def trainFilter(self,trainIdx):
-        pass
+        # Method to create conditional probabilities tables for training data.
+        # @trainIdx is a list of row numbers in dfPreprocessedEmails included inthe training set. 
+        row = 0
+        liUnlistedWords = [] # list of tuples (word from an email, isSpam bool)
+        #unlist self.dfPreprocessedEmails which has rows structure of set of unique words,isspam bool
+        dfTrainingSet = self._dfPreprocessedEmails.iloc[trainIdx]
+        for i,anEmail in dfTrainingSet.iterrows():
+            liWords=list(anEmail['words'])
+            liFlag = list(itertools.repeat(anEmail['isSpam'],len(liWords)))
+            liUnlistedWords[0:0]=zip(liWords,liFlag)
+
         
+        # group by word to be able access the isspam counts.
+        dfUnlistedWords = pd.DataFrame(liUnlistedWords,columns=('words','isSpam')).groupby(('words','isSpam')).count()
+        if DEBUG:
+            print dfUnlistedWords.head()
+            print dfUnlistedWords.tail()
+            print dfUnlistedWords['isSpam']['yes'] # smaple accessor
+            
+        #get total spam and ham counts
+        intTotalSpamEmails= float(sum(self._dfPreprocessedEmails['isSpam']))
+        intTotalHamEmails = float(len(dfTrainingSet)-intTotalSpamEmails)
+        
+        liProbTables = [] #list of dictionaries to convert to df
+        for word in self.liBOW:
+            probPresSpam =float(dfUnlistedWords['isSpam'][word]))/intTotalSpamEmails
+            probPresHam = float(dfUnlistedWords['isSpam'][word]==False)/intTotalHamEmails
+            print ProbPresentHam
+            liProbTables.append((word,probPresSpam,probPresHam,1.0-probPresSpam,1.0-probPresHam))
+            
+        
+        return pd.DataFrame(liProbTables)
+        
+            
 
     #calculate precision and recall
     def evaluatePerformance(self, dfTest):
@@ -394,9 +427,9 @@ class NaiveBayesFilter:
                 else:
                     setWords=setWords.union(self._dfPreprocessedEmails.iloc[i]['words'])
                     
-        self.bow=list(setWords)
+        self.liBOW=list(setWords)
         if DEBUG:
-            print "BOW: Length of BOW {}".format(len(self.bow))
+            print "BOW: Length of BOW {}".format(len(self.liBOW))
             
 
 ######## Main ###################################
@@ -405,17 +438,17 @@ class NaiveBayesFilter:
 
 # list of indecies of training emails to use while creating algorithm
 #indx = [0,1,2,3,4,14,26,67,68,328,403,426,515,851,970]
-#indx=[0,1,2,3,4,14,26,67,68,328,403]
-indx=[]
-directoryList = {'dir':['easy_ham','easy_ham_2','hard_ham','spam','spam_2'],'isSpam':[False,False,False,True,True]}
-#directoryList = {'dir':['easy_ham'],'isSpam':[False]}
+indx=[0,1,2,3,4,14,26,67,68,328,403]
+#indx=[]
+#directoryList = {'dir':['easy_ham','easy_ham_2','hard_ham','spam','spam_2'],'isSpam':[False,False,False,True,True]}
+directoryList = {'dir':['easy_ham','spam'],'isSpam':[False,True]}
 
 #create Naive Bayes Instance
 NB=NaiveBayesFilter()
 #load the emails and preprocess them to produce a list of unque word sets per email.
 NB.importParseCorpus(directoryList,indx)  # get jsut the subset for developing with. 
-
+#get the list of training vs testing data sets. 
 trainIdx,testIdx = NB.splitCorpus(0.66)
 NB.createBOW(trainIdx)
+b=NB.trainFilter(trainIdx)
 
-#Collect all data into one dataframe and produce the probability tables. 
