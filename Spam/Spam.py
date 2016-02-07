@@ -6,6 +6,9 @@ import os # misc OS functions
 import random as rand
 import math
 import itertools
+import csv
+import time
+
 
 # Naive Bayes classifier
 
@@ -146,13 +149,13 @@ class Emails:
                 f=open(liFullDirectoryListing['FQNames'].iloc[i])
                 lines=f.readlines()
                 f.close()
-                liEmails.append(map(lambda s: s.replace('\n',''),lines))
+                liEmails.append(map(lambda s: s.replace('\n','').replace('\t',''),lines))
         else:
             for i,myRow in liFullDirectoryListing.iterrows():
                 f=open(myRow['FQNames'])
                 lines=f.readlines()
                 f.close()
-                liEmails.append(map(lambda s: s.replace('\n',''),lines))            
+                liEmails.append(map(lambda s: s.replace('\n','').replace('\t',''),lines))            
         return liEmails   
    
     # Get the boundary string from headers in dfSplitEmails (via content-type key)
@@ -315,6 +318,10 @@ class NaiveBayesFilter:
             #remove attachments from the bodies. Find the Content-Type key in the header, 
             eEmails.dealWithAttachments()
             #text pre-precessing 
+            if DEBUG:
+                print "Begin dealing with text preprocessing"
+                t=time.time()
+            
             Tp = TextProcessor()
             Tp.dfEmails = eEmails.dfSplitEmails
             Tp.setTag(blIsSpam)  
@@ -324,6 +331,8 @@ class NaiveBayesFilter:
             #Extract the unique words from emails. Create a list of words for each email.
             dfWords = Tp.getUniqueWordsAndTag()
             #print len(dfWords)
+            if DEBUG:
+                print "Time to preprocess text {}".format(time.time()-t)
             liEmailDFs.append(Tp.getUniqueWordsAndTag(MAX_WORD_LENGTH)) ## add to df list until finished importing all emails.
             i+=1
             emailsAdded = len(liEmailDFs[-1])
@@ -368,46 +377,77 @@ class NaiveBayesFilter:
     def trainFilter(self,trainIdx):
         # Method to create conditional probabilities tables for training data.
         # @trainIdx is a list of row numbers in dfPreprocessedEmails included inthe training set. 
+        if DEBUG:
+            print "Start Trainging Filter:"
         row = 0
         liUnlistedWords = [] # list of tuples (word from an email, isSpam bool)
         #unlist self.dfPreprocessedEmails which has rows structure of set of unique words,isspam bool
+        if DEBUG:
+            print "start: Filter to training set"
+            t=time.time()
+        
         dfTrainingSet = self._dfPreprocessedEmails.iloc[trainIdx]
+        
+        if DEBUG:
+            print "Time to filter:{}".format(time.time()-t)
+            t=time.time()
+        
         for i,anEmail in dfTrainingSet.iterrows():
             liWords=list(anEmail['words'])
             liFlag = list(itertools.repeat(anEmail['isSpam'],len(liWords)))
             liUnlistedWords[0:0]=zip(liWords,liFlag)
-
         
-        # group by word to be able access the isspam counts.
-        dfUnlistedWords = pd.DataFrame(liUnlistedWords,columns=('words','isSpam')).groupby(('words','isSpam')).count()
         if DEBUG:
+            "time to unlist all emails unique word sets:{}".format(time.time()-t)
+            t=time.time()
+        
+        # group by word to be able access the isspam counts.e
+        dfUnlistedWords = pd.DataFrame(liUnlistedWords,columns=('words','isSpam')).groupby(('words','isSpam')).count()
+        
+        if DEBUG:
+            print "Time to convert,group and aggregate word counts across ham/spam {}".format(time.time()-t)
+            
+            print "Head and tail of Prob table counts"
             print dfUnlistedWords.head()
             print dfUnlistedWords.tail()
-            print dfUnlistedWords['isSpam']['yes'] # smaple accessor
             
         #get total spam and ham counts
         intTotalSpamEmails= float(sum(dfTrainingSet['isSpam']))
         intTotalHamEmails = float(len(dfTrainingSet)-intTotalSpamEmails)
         
         liProbTables = [] #list of dictionaries to convert to df
+        print "start calculating probabilities:"
+        t=time.time()
+        seriesProb = pd.Series([])
+        
         for word in self.liBOW:
             probPresSpam=0.0
             probPresHam=0.0
+            
+            blIsInTrainingSet = False
             try:
-                probPresSpam =float(dfUnlistedWords['isSpam'][word][True])/intTotalSpamEmails
+                seriesProb = dfUnlistedWords['isSpam'][word]
+                blIsInTrainingSet=True
             except:
                 pass
+            if blIsInTrainingSet:
+                try:
+                    probPresSpam =float(seriesProb[True])/intTotalSpamEmails
+                except:
+                    pass
+                
+                try:
+                    probPresHam = float(seriesProb[False])/intTotalHamEmails
+                except:
+                    pass
             
-            try:
-                probPresHam = float(dfUnlistedWords['isSpam'][word][False])/intTotalHamEmails
-            except:
-                pass
+                liProbTables.append((word,math.log(probPresHam+0.5)-math.log(probPresSpam+0.5),math.log(1.5-probPresHam)-math.log(1.5-probPresSpam)))
             
-            liProbTables.append((word,probPresSpam,probPresHam,1.0-probPresSpam,1.0-probPresHam))
+        if DEBUG:
+            print "Time to calculate probabilities: {}".format(time.time()-t)
             
-        
-        ret= pd.DataFrame(liProbTables,columns=('word','pPresSpam','pPresHam','pAbsSpam','pAbsHam'))
-        ret.set_index(ret['word'])
+        ret= pd.DataFrame(liProbTables,columns=('word','pPres','pAbs'),index=self.liBOW)
+       
         self.dfProb=ret
         return ret
         
@@ -426,6 +466,7 @@ class NaiveBayesFilter:
     def createBOW(self,liIndecies=[]):
         #loop over _drPreprocessedEmails and get one consolidated list of unique words.
         setWords = set()
+        t=time.time()
         if len(liIndecies)==0:
             for i,myRow in self._dfPreprocessedEmails.iterrows():
                 if len(setWords)==0:
@@ -439,29 +480,35 @@ class NaiveBayesFilter:
                     setWords=self._dfPreprocessedEmails.iloc[i]['words']
                 else:
                     setWords=setWords.union(self._dfPreprocessedEmails.iloc[i]['words'])
-                    
+        if DEBUG:
+            print "time to creat BOW: {}".format(time.time()-t)
         self.liBOW=list(setWords)
         if DEBUG:
             print "BOW: Length of BOW {}".format(len(self.liBOW))
     
+    def exportBOW(self):
+        with open('BOW.csv','wb') as BOWFile:
+            myFile = csv.writer(BOWFile,delimiter=',',quotechar='"')
+            for line in self.liBOW:
+                myFile.writerow([line])
+            
+            
         
     # Calculate the log likihood of the content
     # setLines collection of unique preprocessed words in the email
     def LLR(self,setWords):
-        probCHam =0.0
-        probCSpam=0.0
+        LLR=0.0
+        t=time.time()
         
-                 
         for i, tProbs in self.dfProb.iterrows():
             if tProbs['word'] in setWords:
-                    probCHam+=math.log(tProbs['pPresHam']+0.5)
-                    probCSpam+=math.log(tProbs['pPresSpam']+0.5)
+                    LLR+=tProbs['pPres']
             else:
-                probCHam+=math.log(tProbs['pAbsHam']+0.5)
-                probCSpam+=math.log(tProbs['pAbsSpam']+0.5)                
-            #if DEBUG:
-                #print "Probs Ham {},Spam {}".format(probCHam,probCSpam)
-        return (probCHam-probCSpam)      
+                LLR+=tProbs['pAbs']
+
+        if DEBUG:
+            print "Time to calculate LLR: {}".format(time.time()-t)
+        return (LLR)    
     
 ######## Main ###################################
 
@@ -480,11 +527,15 @@ NB=NaiveBayesFilter()
 NB.importParseCorpus(directoryList,indx)  # get jsut the subset for developing with. 
 #get the list of training vs testing data sets. 
 trainIdx,testIdx = NB.splitCorpus(0.66)
+print testIdx
 NB.createBOW(trainIdx)
+NB.exportBOW()
+
 NB.trainFilter(trainIdx)
 # run test
 #get first test email
 print "Test Email"
 print NB._dfPreprocessedEmails.iloc[testIdx]['isSpam']
-for i in testIdx:
+indexSubset = testIdx[1:10]+testIdx[-10:-1]
+for i in indexSubset:
     print "Is spam {}; LLR = {}".format(NB._dfPreprocessedEmails.iloc[i]['isSpam'],NB.LLR(NB._dfPreprocessedEmails.iloc[i]['words']))
