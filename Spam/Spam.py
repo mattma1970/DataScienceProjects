@@ -14,11 +14,11 @@ import time
 
 
 ## Globals
-data_path="./Messages"
+data_path="/home/mattma/Documents/GitRepos/RRepos/Spam/Messages"
 CONST_MIN_HEADER_SIZE=10
 DEBUG=True
-DEBUG_ATTACHMENTS=True
-MAX_WORD_LENGTH=20   # used to remove stray long words that are unlikely to be english words
+DEBUG_ATTACHMENTS=False
+MAX_WORD_LENGTH=60   # used to remove stray long words that are unlikely to be english words
 
 
 
@@ -93,7 +93,7 @@ class Emails:
         pass
 
     liEmails = []  # holds the list of email texts.
-    dfSplitEmails = pd.DataFrame(columns=('header','body'))# hold the header and body when seperated
+    dfSplitEmails = pd.DataFrame(columns=('header','body','filename'))# hold the header and body when seperated
     isSpam = False  #flag indicating if spam or not. Applied to all emails in dfSplitEmails.
     
     # Import emails
@@ -107,7 +107,7 @@ class Emails:
         else:
             return False
         
-    def getAllMessageFileNames(self,path='./Messages'):
+    def getAllMessageFileNames(self,path=data_path):
         # recursively walk the message directory tree and get the fully qualified list of files.
         # return a dictionary with key=subdirectory name, 
         #      value is pandas DataFrame of unqualified file names (FQName) and unqualifies name 'Name')
@@ -115,10 +115,10 @@ class Emails:
         pwd = os.getcwd()
         # if relative path specified get the the fully qualified name
         pwd = os.path.join(pwd,'Messages')
-        if path=='./Messages':
-            dirNames = os.listdir(pwd)    # get directories in the current dir.
+        if path==data_path:
+            dirNames = os.listdir(pwd)    # get directories in the current dir (returns a list of dirs)
         else:
-            dirNames = [path]           #else we have been passed a child directory
+            dirNames = [path]           #else we have been passed a child directory so make a list of one element
             
         for dirName in dirNames:
             listFileNames = []
@@ -127,7 +127,7 @@ class Emails:
             for fn in os.listdir(os.path.join(pwd,dirName)):
                 if self.blIsValid(fn):  # targetin
                     listFQFileNames.append(os.path.join(pwd,dirName,fn))
-                    listFileNames.append(fn)
+                    listFileNames.append(os.path.join(dirName,fn))
             #convert to pandas dataframe
             df=pd.DataFrame({'FQNames':listFQFileNames,'Names':listFileNames})
             df=df.sort('Names')
@@ -142,24 +142,25 @@ class Emails:
 
     def loadEmails(self,liFullDirectoryListing,liFileLocations=[]):
         # get some or all emails from the full list and return list of lists of email lines of text
+        # return list of tuples consisting of (list of lines from email, file name)
         liEmails=[] #list of lists of text lines from each email
         if len(liFileLocations)>0:
-            for i in liFileLocations:
+            for i in liFileLocations: # is is row number not label
                 #print liFullDirectoryListing['FQNames'].iloc[i]
                 f=open(liFullDirectoryListing['FQNames'].iloc[i])
                 lines=f.readlines()
                 f.close()
-                liEmails.append(map(lambda s: s.replace('\n','').replace('\t',''),lines))
+                liEmails.append([map(lambda s: s.replace('\n','').replace('\t',''),lines),liFullDirectoryListing['Names'].iloc[i]])
         else:
-            for i,myRow in liFullDirectoryListing.iterrows():
+            for i,myRow in liFullDirectoryListing.iterrows():   # is is label not row number
                 f=open(myRow['FQNames'])
                 lines=f.readlines()
                 f.close()
-                liEmails.append(map(lambda s: s.replace('\n','').replace('\t',''),lines))            
+                liEmails.append([map(lambda s: s.replace('\n','').replace('\t',''),lines),liFullDirectoryListing['Names'].loc[i]])            
         return liEmails   
    
     # Get the boundary string from headers in dfSplitEmails (via content-type key)
-    # return a list of tuples containing rownumber and boundary string where attachment is present)
+    # return a list of tuples containing row LABEL and boundary string where attachment is present)
     def getBoundaryStrings(self):
         liBoundaryKeys = []
         reContentKey = re.compile('^(content-type)\s*:\s*([A-Za-z\/]+);',re.I)
@@ -179,6 +180,9 @@ class Emails:
                 print "problem at i={}".format(i)
             if blHasAttachment:
                 liBoundaryKeys.append([i,strBoundaryKey])
+                if DEBUG_ATTACHMENTS:
+                    print "File {}, Boundary={}".format(myRow['filename'],strBoundaryKey)
+                    
         return liBoundaryKeys
                 
     
@@ -202,7 +206,8 @@ class Emails:
                 elif rxStartBoundary.search(line)!=None: 
                     liStartBoundaryLocs.append(intLineCounter)                    
                 intLineCounter+=1
-            liLocations.append([row[0],liStartBoundaryLocs,liEndBoundaryLocs])
+            liLocations.append([row[0],liStartBoundaryLocs,liEndBoundaryLocs,self.dfSplitEmails.loc[row[0]]['filename']])
+       
         return liLocations
 
     #Remove the attachments that may be embedded in the body of the email.
@@ -236,30 +241,40 @@ class Emails:
     # Return a list of emails that should be dropped due to mismatched boundary strings.
     # Management function for removing attachements.
     def dealWithAttachments(self):
+        if DEBUG_ATTACHMENTS:
+            print "Start get boundary strings"
         liBStrings= self.getBoundaryStrings()
+        if DEBUG_ATTACHMENTS:
+            print liBStrings
+            print "finished geting boundary strings"
+            print "start locating boundary string in emails"
         liBStringLocs = self.getBoundaryStringLocs(liBStrings)
+        if DEBUG_ATTACHMENTS:
+            print liBStringLocs
+            print "finished locating boundary strings"
+            
         self.removeAttachments(liBStringLocs) 
         if DEBUG_ATTACHMENTS:
             print "Locating remaining boundary tags"
             for i,myRow in self.dfSplitEmails.iterrows():
                 for lines in myRow['body']:
                     if 'boundary' in lines.lower():
-                        print "index {}, {} ".format(i,lines)
+                        print "index {}, filename {},\r\n text {} ".format(i,myRow['filename'],lines)
             print "End locating boundary tags"
             
-    def _severHeader(self,liText):
+    def _severHeader(self,tupText):
         # Get the seperator for header of a single email.
         # @liText is the lines of text for a single email.
         # Return a dictionary of two lists. The first containing the Header Lines list and the second containing the body lines list.
         loc = -1
         try:
-            loc = liText.index('')
+            loc = tupText[0].index('')
         except:
             pass
         if loc!=-1 and loc>CONST_MIN_HEADER_SIZE: # if no split then throw the record away as its unusable
-            return ({'header':list(liText[0:loc]),'body':list(liText[loc+1:len(liText)])})
+            return ({'header':list(tupText[0][0:loc]),'body':list(tupText[0][loc+1:len(tupText[0])]),'filename':tupText[1]})
         else:
-            return ({'header':[],'body':[]})
+            return ({'header':[],'body':[],'filename':''})
 
     def severHeaders(self):
         # liEmails is a list of list of email text lines.
@@ -278,7 +293,7 @@ class NaiveBayesFilter:
     _dfPreprocessedEmails = pd.DataFrame(columns=('words','isSpam'))
     
     #probability tables.
-    dfProb = pd.DataFrame(columns=('words','pPresSpam','pPresHam','pAbsSpam','pAbsHam'))
+    dfProb = pd.DataFrame(columns=('words','pPres','pAbs'))
     liBOW = [] #Bag of words. A list of unique words in the whole corpus. A feature vector is a vector with one coordinate per  bow word.
     
     #The threshold for the LLR below which an email is considered spam.
@@ -288,8 +303,6 @@ class NaiveBayesFilter:
     _intTotalSpamEmails = 0
     _intTotalHamEmails = 0
     
- 
-
     #Load get all the emails in the ./Message directory.
     #Deal with each Dir one at a time and tag emails as ham/spam
     #directoryList - list of relative directory names and correspondig tag isSpam.
@@ -304,8 +317,7 @@ class NaiveBayesFilter:
             #get file names in the current directory.
             allFiles_dic = eEmails.getAllMessageFileNames(directoryList['dir'][i])
             #eEmails.showMessageCounts(allFiles_dic)            
-
-            # get the sample emails from easy_ham folder
+            
             if len(indx)>0:
                 eEmails.liEmails = eEmails.loadEmails(allFiles_dic[directoryList['dir'][i]],indx)
             else:
@@ -421,8 +433,9 @@ class NaiveBayesFilter:
         seriesProb = pd.Series([])
         
         for word in self.liBOW:
-            probPresSpam=0.0
-            probPresHam=0.0
+            #fall back values when word not present in andy spam or ham emails
+            probPresSpam=0.5/intTotalSpamEmails
+            probPresHam=0.5/intTotalHamEmails
             
             blIsInTrainingSet = False
             try:
@@ -432,16 +445,16 @@ class NaiveBayesFilter:
                 pass
             if blIsInTrainingSet:
                 try:
-                    probPresSpam =float(seriesProb[True])/intTotalSpamEmails
+                    probPresSpam =(float(seriesProb[True])+0.5)/(intTotalSpamEmails+0.5)
                 except:
                     pass
                 
                 try:
-                    probPresHam = float(seriesProb[False])/intTotalHamEmails
+                    probPresHam = (0.5+float(seriesProb[False]))/(intTotalHamEmails+0.5)
                 except:
                     pass
             
-                liProbTables.append((word,math.log(probPresHam+0.5)-math.log(probPresSpam+0.5),math.log(1.5-probPresHam)-math.log(1.5-probPresSpam)))
+                liProbTables.append((word,math.log(probPresHam)-math.log(probPresSpam),math.log(1.0-probPresHam)-math.log(1.0-probPresSpam)))
             
         if DEBUG:
             print "Time to calculate probabilities: {}".format(time.time()-t)
@@ -454,9 +467,32 @@ class NaiveBayesFilter:
             
 
     #calculate precision and recall
-    def evaluatePerformance(self, dfTest):
-        pass
+    def evaluatePerformance(self, dfTest, threshold=40, samplePercent=1):
+        testResults = []
+        if samplePercent<1:
+            sampleIdx = rand.sample(range(0,len(dfTest)),int(len(dfTest)*samplePercent))
+            dfTest = dfTest.iloc[sampleIdx]                         
+            
+        for i,testEmail in dfTest.iterrows():
+            LLR = self.LLR(testEmail['words'])
+            print "Spam? {}; LLR = {}; predict Spam?={}".format(testEmail['isSpam'],LLR,LLR<threshold)   
+            testResults.append({'actual':testEmail['isSpam'],'predicted': LLR<threshold,'LLR':LLR})
+        
+        return pd.DataFrame(testResults)
 
+    def printPerfStats(self,dfResults):
+        print "Accuracy {}".format(float(sum([x['actual']==x['predicted'] for i,x in dfTestResults.iterrows()]))/float(len(dfTestResults)))
+        # TPR,sensetivity,recall
+            
+        recall=float(sum([(x['actual']==True and x['predicted']==True) for i,x in dfTestResults.iterrows()]))/float(sum([x['actual']==True for i,x in dfTestResults.iterrows()]))
+        print 'TPR/sensitivity/recall {}'.format(recall)
+        
+        #TNR, specificity
+        print 'TNR/specificity {}'.format(float(sum([(x['actual']==False and x['predicted']==False) for i,x in dfTestResults.iterrows()]))/float(sum([x['actual']==False for i,x in dfTestResults.iterrows()])))
+        precision = float(sum([(x['actual']==True and x['predicted']==True) for i,x in dfTestResults.iterrows()]))/float(sum([x['predicted']==True for i,x in dfTestResults.iterrows()]))
+        print 'precision {}'.format(precision)
+        print "F1 score {}".format(2.0*precision*recall/(precision+recall))
+        
     #plot the recall performance vs threshold for range of thresholds
     def plotPerformance(self,dfTest,dStartThresh,dfEndThresh):
         pass
@@ -506,20 +542,27 @@ class NaiveBayesFilter:
             else:
                 LLR+=tProbs['pAbs']
 
-        if DEBUG:
-            print "Time to calculate LLR: {}".format(time.time()-t)
+        #if DEBUG:
+        #    print "Time to calculate LLR: {}".format(time.time()-t)
         return (LLR)    
     
 ######## Main ###################################
 
+SCENARIO='SMALL_BATCH'
+
+
 #Get all the file names for the message corpus
 
 # list of indecies of training emails to use while creating algorithm
-#indx = [0,1,2,3,4,14,26,67,68,328,403,426,515,851,970]
-#indx=[0,1,2,3,4,14,26,67,68,328,403]
-indx=[]
-directoryList = {'dir':['easy_ham','easy_ham_2','hard_ham','spam','spam_2'],'isSpam':[False,False,False,True,True]}
-#directoryList = {'dir':['easy_ham','spam'],'isSpam':[False,True]}
+if SCENARIO=='ALL':
+    indx=[]
+    directoryList = {'dir':['easy_ham','easy_ham_2','hard_ham','spam','spam_2'],'isSpam':[False,False,False,True,True]}    
+elif SCENARIO=='TEXTBOOK':
+    indx = [0,1,2,3,4,14,26,67,68,328,403,426,515,851,970]
+    directoryList = {'dir':['easy_ham','spam','spam_2'],'isSpam':[False,True,True]}
+elif SCENARIO=='SMALL_BATCH':
+    indx=[0,1,2,3,4,14,11,12,16,17,27,30,40,50,100,101,102,26,67,68,328,403]
+    directoryList = {'dir':['easy_ham','spam_2'],'isSpam':[False,True]}
 
 #create Naive Bayes Instance
 NB=NaiveBayesFilter()
@@ -527,15 +570,13 @@ NB=NaiveBayesFilter()
 NB.importParseCorpus(directoryList,indx)  # get jsut the subset for developing with. 
 #get the list of training vs testing data sets. 
 trainIdx,testIdx = NB.splitCorpus(0.66)
-print testIdx
 NB.createBOW(trainIdx)
 NB.exportBOW()
-
 NB.trainFilter(trainIdx)
 # run test
 #get first test email
-print "Test Email"
-print NB._dfPreprocessedEmails.iloc[testIdx]['isSpam']
-indexSubset = testIdx[1:10]+testIdx[-10:-1]
-for i in indexSubset:
-    print "Is spam {}; LLR = {}".format(NB._dfPreprocessedEmails.iloc[i]['isSpam'],NB.LLR(NB._dfPreprocessedEmails.iloc[i]['words']))
+print "Test Emails"
+
+dfTestResults = NB.evaluatePerformance(NB._dfPreprocessedEmails.iloc[testIdx],0,1)
+NB.printPerfStats(dfTestResults)
+

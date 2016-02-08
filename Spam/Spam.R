@@ -229,6 +229,9 @@ trainFlagIsSpam = rep(c(TRUE,FALSE),c(intTotalSpam-length(testSpamIds),intTotalH
 # Get training set complete list of unique words from spam and ham
 #bow = unique(unlist(trainMsgWords))
 
+write(as.vector(unlist(testMsgWords)), 'R_BOW.csv')
+
+
 ####################################################
 # create probability tables for spam and ham emails.
 ####################################################
