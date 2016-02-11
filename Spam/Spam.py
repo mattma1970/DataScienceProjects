@@ -8,7 +8,7 @@ import math
 import itertools
 import csv
 import time
-
+from functools import partial
 
 # Naive Bayes classifier
 
@@ -474,9 +474,16 @@ class NaiveBayesFilter:
             dfTest = dfTest.iloc[sampleIdx]                         
             
         for i,testEmail in dfTest.iterrows():
+            if DEBUG:
+                t=time.time()
             LLR = self.LLR(testEmail['words'])
-            print "Spam? {}; LLR = {}; predict Spam?={}".format(testEmail['isSpam'],LLR,LLR<threshold)   
-            testResults.append({'actual':testEmail['isSpam'],'predicted': LLR<threshold,'LLR':LLR})
+            if DEBUG:
+                procTime = time.time()-t
+            print "Spam? {}; LLR = {}; predict Spam?={} ProcTime={}".format(testEmail['isSpam'],LLR,LLR<threshold, procTime)
+            if DEBUG:
+                testResults.append({'actual':testEmail['isSpam'],'predicted': LLR<threshold,'LLR':LLR})
+            else:
+                testResults.append({'actual':testEmail['isSpam'],'predicted': LLR<threshold,'LLR':LLR,'processingTime':procTime})
         
         return pd.DataFrame(testResults)
 
@@ -528,27 +535,37 @@ class NaiveBayesFilter:
             for line in self.liBOW:
                 myFile.writerow([line])
             
-            
-        
+
+    def isPres(self,sRow,setWords):
+        if sRow['word'] in setWords:
+            return sRow['pPres']
+        else:
+            return sRow['pAbs']
+
+
     # Calculate the log likihood of the content
     # setLines collection of unique preprocessed words in the email
     def LLR(self,setWords):
         LLR=0.0
         t=time.time()
-        
-        for i, tProbs in self.dfProb.iterrows():
-            if tProbs['word'] in setWords:
-                    LLR+=tProbs['pPres']
-            else:
-                LLR+=tProbs['pAbs']
 
-        #if DEBUG:
-        #    print "Time to calculate LLR: {}".format(time.time()-t)
-        return (LLR)    
+        #Use apply function on df. on small_batch scenario average time is 0.32 sec
+        fLLRTerm = partial(self.isPres,setWords=setWords)  #create a partial with the setofwords from the test email passed in.
+        LLR = sum(self.dfProb.apply(fLLRTerm,axis=1))
+
+        #for loop version. On small_batch scenario av. time is 0.99sec
+        #for i, tProbs in self.dfProb.iterrows():
+        #    if tProbs['word'] in setWords:
+        #            LLR+=tProbs['pPres']
+        #    else:
+        #        LLR+=tProbs['pAbs']
+
+
+        return LLR
     
 ######## Main ###################################
 
-SCENARIO='SMALL_BATCH'
+SCENARIO="ALL"
 
 
 #Get all the file names for the message corpus
@@ -558,7 +575,8 @@ if SCENARIO=='ALL':
     indx=[]
     directoryList = {'dir':['easy_ham','easy_ham_2','hard_ham','spam','spam_2'],'isSpam':[False,False,False,True,True]}    
 elif SCENARIO=='TEXTBOOK':
-    indx = [0,1,2,3,4,14,26,67,68,328,403,426,515,851,970]
+    #indx = [0,1,2,3,4,14,26,67,68,328,403,426,515,851,970]
+    indx = [0,1,2,3,4,14,11,12,16,17,27,30,40,50,100,101,102,26,67,68,328,403]
     directoryList = {'dir':['easy_ham','spam','spam_2'],'isSpam':[False,True,True]}
 elif SCENARIO=='SMALL_BATCH':
     indx=[0,1,2,3,4,14,11,12,16,17,27,30,40,50,100,101,102,26,67,68,328,403]
@@ -577,6 +595,6 @@ NB.trainFilter(trainIdx)
 #get first test email
 print "Test Emails"
 
-dfTestResults = NB.evaluatePerformance(NB._dfPreprocessedEmails.iloc[testIdx],0,1)
+dfTestResults = NB.evaluatePerformance(NB._dfPreprocessedEmails.iloc[testIdx],0,0.1)
 NB.printPerfStats(dfTestResults)
 
