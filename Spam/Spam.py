@@ -9,10 +9,25 @@ import itertools
 import csv
 import time
 from functools import partial
+from matplotlib import pyplot as plt
 
+###############################################################################################
 # Naive Bayes Spam Filter using the spam assasin public corpus available on the Apache website.
-# Text preprocessing is performed through application of simple regular expression substituations. The package NLTK was not used.
-# The purpose of this project was primarily to improve Python programing skills, work with Pandas and explore code optimisation.
+
+# The purpose of this project was primarily to improve Python programing skills, work with Pandas objects and explore code optimisation.
+
+# Note: Text preprocessing is performed through application of simple regular expression substituations. The package NLTK was not used.
+
+### Classification Performance:
+# The threshold value used to classifying spam/ham was selected to minimise the false positives rate. The rationale is that false positives correspond to ham classified as spam which from a user perspective represents the greatest risk ( a good email is never seen). The FPR = 1-TNR. The best performacen was found to have a threshold value of 38 resulting in a FPR = 2.3% or 2.3% of ham emails classified as spam. For this value 93.5% of spam emails are detected. While these results are promising neither 2.3% type 1 errors or 6.5% type 2 erros (FNR) would be acceptable in practice. Thus these preliminary results using 'off the self' technique could be used a benchmark for further refinement. This might include add header information to the analysis (currently ignored). Results for threshold=38
+# Threshhold=38
+# Accuracy 0.96572327044
+# TPR/sensitivity/recall 0.932598039216
+# TNR/specificity 0.977157360406
+# precision 0.933742331288
+# F1 score 0.933169834457
+
+### Code optimisation.
 # The most notable speed improvement was in the calculation of the Log Likelihood ratios.
 # Three methods where used:
 # i) For loop and set 'in' (O(1)) lookup
@@ -20,15 +35,10 @@ from functools import partial
 # iii) Observing that the list of unique words in emails was typically < 5% of the length of the Bag Of Words the contribution of missing words to the LLR
 #      was calculated using the (one time calculation) total LLR for the absence of all words - the sum of probabilities of those words in the email being absent.
 # The outcomes was a nearly 300 times improvement in calculation time for the LLR between method (i) and (iii)
-# Without any detailed optimisation of the threshold used to classify spam the following results were achieved:
-#Accuracy 0.942607003891
-# TPR/sensitivity/recall 0.996899224806
-# TNR/specificity 0.917788802268
-# precision 0.847167325428
-# F1 score 0.915954415954
-# While the TPR of 99.6% was excellent (being 99.6% of spam where correctly classified) the precision was quite poor at 84.7% (of those predicted to be spam only 84.7% where )
-# This means that c. 15% of those classifed as spam where in fact ham. Misclassifying ham is an error that should be more heavily as 
-# this will inevitably lead to important emails being missed by the user. 
+ # The dramatic improvement was achieved by migrating pure python structures to instance methods on dataframes that are know to be optimised for speed. Specifically replacing for loops with apply constructs, replacing row operations using iterrows() with set and indexing opertions and finally seeking ways to minimise the number of calculations that needed to be performed. 
+###############################################################################################
+
+
 
 ## Globals
 data_path="/home/mattma/Documents/GitRepos/RRepos/Spam/Messages"
@@ -38,10 +48,8 @@ DEBUG_ATTACHMENTS=False   # flag for verbose profiling of attachment deletion.
 MAX_WORD_LENGTH=60        # used to remove stray long words that are unlikely to be english words
 
 
-
-
 # TODO: Find python package for text preprocessing.
-# preprocessing methods and word extraction from a single email.
+# Preprocessing methods and word extraction from a single email.
 class TextProcessor:
     def __init__(self):
         self.getStopWords()
@@ -100,7 +108,6 @@ class TextProcessor:
                         setWords.add(word)  #takes care of only adding unique words
             liUniqueWords.append({'words':setWords,'isSpam':self._blIsSpam})
         return pd.DataFrame(liUniqueWords)
-
 
 
 # class container helper functions that operate collections of emails.
@@ -412,7 +419,7 @@ class NaiveBayesFilter:
         liUnlistedWords = [] # list of tuples (word from an email, isSpam bool)
         #unlist self.dfPreprocessedEmails which has rows structure of set of unique words,isspam bool
         if DEBUG:
-            print "start: Filter to training set"
+            print "Start: Filter to training set"
             t=time.time()
         
         dfTrainingSet = self._dfPreprocessedEmails.iloc[trainIdx]
@@ -432,13 +439,10 @@ class NaiveBayesFilter:
         
         # group by word to be able access the isspam counts.e
         dfUnlistedWords = pd.DataFrame(liUnlistedWords,columns=('words','isSpam')).groupby(('words','isSpam')).count()
-        
+      
         if DEBUG:
-            print "Time to convert,group and aggregate word counts across ham/spam {}".format(time.time()-t)
-            
-            print "Head and tail of Prob table counts"
-            print dfUnlistedWords.head()
-            print dfUnlistedWords.tail()
+            print "Time to create counts={}".format(time.time()-t)
+
             
         #get total spam and ham counts
         intTotalSpamEmails= float(sum(dfTrainingSet['isSpam']))
@@ -480,50 +484,6 @@ class NaiveBayesFilter:
        
         self.dfProb=ret
         return ret
-        
-            
-
-    #calculate precision and recall
-    def evaluatePerformance(self, dfTest, threshold=40, samplePercent=1):
-        testResults = []
-        if samplePercent<1:
-            sampleIdx = rand.sample(range(0,len(dfTest)),int(len(dfTest)*samplePercent))
-            dfTest = dfTest.iloc[sampleIdx]                         
-            
-        for i,testEmail in dfTest.iterrows():
-            if DEBUG:
-                t=time.time()
-            LLR = self.LLR(testEmail['words'])
-            if DEBUG:
-                procTime = time.time()-t
-            if DEBUG:
-                print "Spam? {}; LLR = {}; predict Spam?={} ProcTime={}".format(testEmail['isSpam'],LLR,LLR<threshold, procTime)
-                testResults.append({'actual':testEmail['isSpam'],'predicted': LLR<threshold,'LLR':LLR,'processingTime':procTime})
-            else:
-                testResults.append({'actual':testEmail['isSpam'],'predicted': LLR<threshold,'LLR':LLR})
-       
-        return pd.DataFrame(testResults)
-
-    def printPerfStats(self,dfResults):
-        accuracy = float(sum([x['actual']==x['predicted'] for i,x in dfTestResults.iterrows()]))/float(len(dfTestResults))
-        print "Accuracy {}".format(accuracy)
-        # TPR,sensetivity,recall
-            
-        recall=float(sum([(x['actual']==True and x['predicted']==True) for i,x in dfTestResults.iterrows()]))/float(sum([x['actual']==True for i,x in dfTestResults.iterrows()]))
-        print 'TPR/sensitivity/recall {}'.format(recall)
-        
-        #TNR, specificity
-        specificity = float(sum([(x['actual']==False and x['predicted']==False) for i,x in dfTestResults.iterrows()]))/float(sum([x['actual']==False for i,x in dfTestResults.iterrows()]))
-        print 'TNR/specificity {}'.format(specificity)
-        precision = float(sum([(x['actual']==True and x['predicted']==True) for i,x in dfTestResults.iterrows()]))/float(sum([x['predicted']==True for i,x in dfTestResults.iterrows()]))
-        print 'precision {}'.format(precision)
-        f1=2.0*precision*recall/(precision+recall)
-        print "F1 score {}".format(f1)
-        return accuracy,specificity,precision,f1
-    
-    #plot the recall performance vs threshold for range of thresholds
-    def plotPerformance(self,dfTest,dStartThresh,dfEndThresh):
-        pass
     
     # Get bag of words.
     #if list specified then only process those row numbers (iloc)
@@ -554,9 +514,96 @@ class NaiveBayesFilter:
         with open('BOW.csv','wb') as BOWFile:
             myFile = csv.writer(BOWFile,delimiter=',',quotechar='"')
             for line in self.liBOW:
-                myFile.writerow([line])
-            
+                myFile.writerow([line])        
 
+
+    # Calculate the log likelihood of the content
+    # setLines collection of unique preprocessed words in the email
+    def LLR(self,setWords):
+        LLR=0.0
+        t=time.time()
+        
+        # Method 1: for loop version. On 'ALL' on i5 Quad core took around 20sec's per LLR calc
+            #for i, tProbs in self.dfProb.iterrows():
+            #    if tProbs['word'] in setWords:
+            #            LLR+=tProbs['pPres']
+            #    else:
+            #        LLR+=tProbs['pAbs']
+
+        # Method 2: Use apply function on df. 
+        # fLLRTerm = partial(self.isPres,setWords=setWords)  #create a partial with the setofwords from the test email passed in.
+        # LLR = sum(self.dfProb.apply(fLLRTerm,axis=1))
+        
+        # Method 3: Try relying on indexing using the set of words. Also use netting of Total PAbs to calculate contribution of missing words.
+        # Results: On an i5 quad core this method reduced the time to calc LLR from 20sec to 0.02seconds
+        fTotalAbscent=self.dfProb['pAbs'].sum()
+        fLLRPres = self.dfProb.loc[setWords,'pPres'].sum()
+        fLLRAbs = self.dfProb.loc[setWords,'pAbs'].sum()
+        LLR = fTotalAbscent -fLLRAbs+fLLRPres
+
+        return LLR            
+
+    # Classify the corpus of test emails.
+    # Returns the results including the raw LL that can be used in further analysis.
+    def evaluatePerformance(self, dfTest, threshold=40, samplePercent=1):
+        testResults = []
+        if samplePercent<1:
+            sampleIdx = rand.sample(range(0,len(dfTest)),int(len(dfTest)*samplePercent))
+            dfTest = dfTest.iloc[sampleIdx]                         
+            
+        for i,testEmail in dfTest.iterrows():
+            if DEBUG:
+                t=time.time()
+            LLR = self.LLR(testEmail['words'])
+            if DEBUG:
+                procTime = time.time()-t
+            if DEBUG:
+                print "Spam? {}; LLR = {}; predict Spam?={} ProcTime={}".format(testEmail['isSpam'],LLR,LLR<threshold, procTime)
+                testResults.append({'actual':testEmail['isSpam'],'predicted': LLR<threshold,'LLR':LLR,'processingTime':procTime})
+            else:
+                testResults.append({'actual':testEmail['isSpam'],'predicted': LLR<threshold,'LLR':LLR})
+       
+        return pd.DataFrame(testResults)
+
+    # Display and return typical performance statistics.
+    def printPerfStats(self,dfResults):
+
+        accuracy = float(sum(dfResults['actual']==dfResults['predicted']))/float(len(dfTestResults))
+        print "Accuracy {}".format(accuracy)
+        # TPR,sensetivity,recall
+        recall=float(sum((dfResults['actual']==True) & (dfResults['predicted']==True)))/float(sum(dfResults['actual']==True))
+        print 'TPR/sensitivity/recall {}'.format(recall)
+        #TNR, specificity
+        specificity = float(sum((dfResults['actual']==False) & (dfResults['predicted']==False)))/float(sum(dfResults['actual']==False))
+        print 'TNR/specificity {}'.format(specificity)
+        precision = float(sum((dfResults['actual']==True) & (dfResults['predicted']==True)))/float(sum(dfResults['predicted']==True))
+        print 'precision {}'.format(precision)
+        f1=2.0*precision*recall/(precision+recall)
+        print "F1 score {}".format(f1)
+        
+        return accuracy,recall,specificity,precision,f1
+
+    
+    #plot the recall performance vs threshold for range of thresholds
+    def plotPerformance(self,dfData):
+        
+        plt.figure()
+        dfData.plot()
+        plt.ylabel('Rate or ratio(f1)')
+        plt.title('Performance vs threshold value')
+        plt.show()
+        
+    
+    def exportPerformance(self,dfData):
+        dfData.to_csv('./TrainingResults.csv', sep=",", na_rep='', float_format=None, cols=None, 
+                      header=True, index=True, index_label=None, 
+                      mode='w', nanRep=None, encoding=None, 
+                      quoting=None, line_terminator='\n', 
+                      chunksize=None, tupleize_cols=False, 
+                      date_format=None)  
+        
+        
+    # Used to create partial object (curried function) for method 2
     def isPres(self,sRow,setWords):
         if sRow['word'] in setWords:
             return sRow['pPres']
@@ -564,31 +611,6 @@ class NaiveBayesFilter:
             return sRow['pAbs']
 
 
-    # Calculate the log likihood of the content
-    # setLines collection of unique preprocessed words in the email
-    def LLR(self,setWords):
-        LLR=0.0
-        t=time.time()
-        
-        #for loop version. On 'ALL' on i5 Quad core took around 20sec's per LLR calc
-            #for i, tProbs in self.dfProb.iterrows():
-            #    if tProbs['word'] in setWords:
-            #            LLR+=tProbs['pPres']
-            #    else:
-            #        LLR+=tProbs['pAbs']
-
-        #Use apply function on df. 
-        #fLLRTerm = partial(self.isPres,setWords=setWords)  #create a partial with the setofwords from the test email passed in.
-        #LLR = sum(self.dfProb.apply(fLLRTerm,axis=1))
-        
-        # Try relying on indexing using the set of words
-        # Results: On an i5 quad core this method reduced the time to calc LLR from 20sec to 0.02seconds
-        fTotalAbscent=self.dfProb['pAbs'].sum()
-        fLLRPres = self.dfProb.loc[setWords,'pPres'].sum()
-        fLLRAbs = self.dfProb.loc[setWords,'pAbs'].sum()
-        LLR = fTotalAbscent -fLLRAbs+fLLRPres
-
-        return LLR
     
 ######## Main ###################################
 
@@ -605,35 +627,39 @@ elif SCENARIO=='SMALL_BATCH':
     indx=[0,1,2,3,4,14,11,12,16,17,27,30,40,50,100,101,102,26,67,68,328,403]
     directoryList = {'dir':['easy_ham','spam_2'],'isSpam':[False,True]}
 
-#create Naive Bayes Instance
+# Create Naive Bayes Instance
 NB=NaiveBayesFilter()
-#load the emails and preprocess them to produce a list of unque word sets per email.
+# Load the emails and preprocess them to produce a list of unque word sets per email.
+print "Import Emails.."
 NB.importParseCorpus(directoryList,indx)  # get jsut the subset for developing with. 
 #get the list of training vs testing data sets. 
+print "Split Emails into Training and Test sets.."
 trainIdx,testIdx = NB.splitCorpus(0.66)
+print "Create Bag of Words.."
 NB.createBOW(trainIdx)
 NB.exportBOW()
+print "Train Filters.."
 NB.trainFilter(trainIdx)
-# run test
-#get first test email
-print "Test Emails"
+# Run tests
 
+print "Evaluate performance on test email set.."
 
-liResults = []
+liResults = []  # store all performance metrics
+dfTestResults = NB.evaluatePerformance(NB._dfPreprocessedEmails.iloc[testIdx],0,1) # returns dataframe with columns IsSpam,Predicted Spam, LLR
+
+# Iterate of the threshold values and find where the Type 1 errors are minimised.
 for i in range(0,80,1):
-    dfTestResults = NB.evaluatePerformance(NB._dfPreprocessedEmails.iloc[testIdx],i,1)
     print "Threshhold={}".format(i)
-    accuracy,specificity,precision,f1 = NB.printPerfStats(dfTestResults)
-    liResults.append({'threshold':i,'acc':accuracy,'spec':specificity,'prec':precision,'f1':f1})
+    dfTestResults['predicted']=pd.Series(dfTestResults['LLR']<i)
+    accuracy,recall,specificity,precision,f1 = NB.printPerfStats(dfTestResults)
+    liResults.append({'threshold':i,'acc':accuracy,'sens.':recall,'spec':specificity,'prec':precision,'f1':f1})
 
 results = pd.DataFrame(liResults)
+results2 = results.drop('threshold',axis=1)
+results2.index.name='Threshold'
+NB.plotPerformance(results2)
 
-results.to_csv('./TrainingResults.csv', sep=",", na_rep='', float_format=None, cols=None, 
-              header=True, index=True, index_label=None, 
-              mode='w', nanRep=None, encoding=None, 
-              quoting=None, line_terminator='\n', 
-              chunksize=None, tupleize_cols=False, 
-              date_format=None)
+
 
 
     
